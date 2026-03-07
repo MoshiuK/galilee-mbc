@@ -1,0 +1,17 @@
+# CLAUDE.md — Galilee MBC
+
+## Project
+Galilee Missionary Baptist Church digital ministry — bulletins, sermons, Bible study content.
+
+## Sites
+- galileembchurch.com
+- - study.galileembchurch.com
+ 
+  - ## Structure
+  - - `sunday-bulletin-YYYY-MM-DD.md` — Weekly bulletin markdown
+    - - `sunday-sermon-YYYY-MM-DD.md` — Weekly sermon notes
+     
+      - ## Related
+      - - galilee-connect (JavaScript engagement app)
+        - - Knox-Media-Group/Sermons (sermon builder)
+          - - Central hub: github.com/MoshiuK/kmgi-hub

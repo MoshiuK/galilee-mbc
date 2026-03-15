@@ -1,0 +1,1123 @@
+From 44e105a19c1fb4ed7aeaa06d92f86356e10042a7 Mon Sep 17 00:00:00 2001
+From: Claude <claude@anthropic.com>
+Date: Sun, 15 Mar 2026 04:15:13 +0000
+Subject: [PATCH] Add church calendar and messaging features to admin dashboard
+
+Calendar feature:
+- Monthly grid view with color-coded event categories
+- Full CRUD for events with title, date, time, location, category
+- Interactive calendar with click-to-edit events
+- Events table listing below calendar
+
+Church messaging feature:
+- Three send modes: broadcast, direct, email blast
+- Message history with filter tabs
+- View message details in modal
+- Integrates with existing email notification system
+
+Infrastructure:
+- New calendar_events and church_messages tables in schema.sql
+- RESTful API endpoints matching existing patterns
+- Updated sidebar navigation across all admin views
+
+https://claude.ai/code/session_01VbvfQPAi8378icb2L9wCEp
+---
+ db/schema.sql                    |  36 ++++
+ routes/admin.js                  |  20 ++
+ routes/api.js                    | 214 +++++++++++++++++++
+ views/admin/calendar.html        | 344 +++++++++++++++++++++++++++++++
+ views/admin/church-messages.html | 320 ++++++++++++++++++++++++++++
+ views/admin/dashboard.html       |   8 +
+ views/admin/lessons.html         |   8 +
+ views/admin/members.html         |   8 +
+ views/admin/messages.html        |   8 +
+ 9 files changed, 966 insertions(+)
+ create mode 100644 views/admin/calendar.html
+ create mode 100644 views/admin/church-messages.html
+
+diff --git a/db/schema.sql b/db/schema.sql
+index b6eac0b..61cd0a1 100644
+--- a/db/schema.sql
++++ b/db/schema.sql
+@@ -113,6 +113,42 @@ CREATE INDEX IF NOT EXISTS idx_lessons_date ON lessons(study_date);
+ CREATE INDEX IF NOT EXISTS idx_lessons_status ON lessons(status);
+ CREATE INDEX IF NOT EXISTS idx_lesson_attachments_lesson ON lesson_attachments(lesson_id);
+ 
++-- Church Calendar Events
++CREATE TABLE IF NOT EXISTS calendar_events (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    title TEXT NOT NULL,
++    description TEXT,
++    event_date TEXT NOT NULL,       -- YYYY-MM-DD
++    start_time TEXT,                -- HH:MM (24hr)
++    end_time TEXT,                  -- HH:MM (24hr)
++    location TEXT DEFAULT 'Galilee MBC',
++    category TEXT DEFAULT 'general', -- worship, bible-study, youth, fellowship, meeting, general
++    is_recurring INTEGER DEFAULT 0,
++    created_at TEXT DEFAULT (datetime('now')),
++    updated_at TEXT DEFAULT (datetime('now'))
++);
++
++CREATE INDEX IF NOT EXISTS idx_calendar_date ON calendar_events(event_date);
++CREATE INDEX IF NOT EXISTS idx_calendar_category ON calendar_events(category);
++
++-- Church Messaging (admin-to-member direct messages, distinct from notification message_log)
++CREATE TABLE IF NOT EXISTS church_messages (
++    id INTEGER PRIMARY KEY AUTOINCREMENT,
++    sender_name TEXT NOT NULL,       -- admin username who sent
++    recipient_id INTEGER,            -- member id (NULL = broadcast)
++    recipient_name TEXT,             -- denormalized for display
++    subject TEXT NOT NULL,
++    body TEXT NOT NULL,
++    channel TEXT DEFAULT 'internal', -- internal, email, sms
++    is_read INTEGER DEFAULT 0,
++    is_broadcast INTEGER DEFAULT 0,
++    created_at TEXT DEFAULT (datetime('now')),
++    FOREIGN KEY (recipient_id) REFERENCES members(id) ON DELETE SET NULL
++);
++
++CREATE INDEX IF NOT EXISTS idx_church_messages_recipient ON church_messages(recipient_id);
++CREATE INDEX IF NOT EXISTS idx_church_messages_date ON church_messages(created_at);
++
+ -- Default settings
+ INSERT OR IGNORE INTO settings (key, value) VALUES ('send_hour', '8');
+ INSERT OR IGNORE INTO settings (key, value) VALUES ('send_minute', '0');
+diff --git a/routes/admin.js b/routes/admin.js
+index 5aba8e6..d028f08 100644
+--- a/routes/admin.js
++++ b/routes/admin.js
+@@ -268,6 +268,26 @@ router.get('/lessons', requireAuth, (req, res) => {
+     });
+ });
+ 
++// ==================== CALENDAR PAGE ====================
++
++router.get('/calendar', requireAuth, (req, res) => {
++    const renderPage = req.app.locals.renderPage;
++    renderPage(res, 'admin/calendar.html', {
++        title: 'Church Calendar',
++        pageTitle: 'Calendar'
++    });
++});
++
++// ==================== CHURCH MESSAGING PAGE ====================
++
++router.get('/church-messages', requireAuth, (req, res) => {
++    const renderPage = req.app.locals.renderPage;
++    renderPage(res, 'admin/church-messages.html', {
++        title: 'Church Messages',
++        pageTitle: 'Church Messages'
++    });
++});
++
+ // ==================== HELPER FUNCTIONS ====================
+ 
+ function getUpcomingDates(field, days) {
+diff --git a/routes/api.js b/routes/api.js
+index 69e3ab5..2fcc359 100644
+--- a/routes/api.js
++++ b/routes/api.js
+@@ -738,6 +738,220 @@ router.delete('/lessons/:id/attachments/:attachmentId', requireAuth, (req, res)
+     }
+ });
+ 
++// ==================== CALENDAR API ====================
++
++// List calendar events (with optional month filter)
++router.get('/calendar', requireAuth, (req, res) => {
++    const db = getDb();
++    const year = parseInt(req.query.year) || new Date().getFullYear();
++    const month = parseInt(req.query.month) || (new Date().getMonth() + 1);
++
++    const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
++    const endMonth = month === 12 ? 1 : month + 1;
++    const endYear = month === 12 ? year + 1 : year;
++    const endDate = `${endYear}-${String(endMonth).padStart(2, '0')}-01`;
++
++    const events = db.prepare(
++        'SELECT * FROM calendar_events WHERE event_date >= ? AND event_date < ? ORDER BY event_date, start_time'
++    ).all(startDate, endDate);
++
++    res.json({ success: true, events, year, month });
++});
++
++// Get single event
++router.get('/calendar/:id', requireAuth, (req, res) => {
++    const db = getDb();
++    const event = db.prepare('SELECT * FROM calendar_events WHERE id = ?').get(req.params.id);
++    if (!event) {
++        return res.status(404).json({ error: 'Event not found' });
++    }
++    res.json({ success: true, event });
++});
++
++// Create event
++router.post('/calendar', requireAuth, (req, res) => {
++    const { title, description, event_date, start_time, end_time, location, category } = req.body;
++
++    if (!title || !event_date) {
++        return res.status(400).json({ error: 'Title and date are required' });
++    }
++
++    const db = getDb();
++    try {
++        const result = db.prepare(`
++            INSERT INTO calendar_events (title, description, event_date, start_time, end_time, location, category)
++            VALUES (?, ?, ?, ?, ?, ?, ?)
++        `).run(title.trim(), description?.trim() || null, event_date, start_time || null,
++            end_time || null, location?.trim() || 'Galilee MBC', category || 'general');
++
++        logger.info(`Calendar event created: "${title}" on ${event_date} (ID: ${result.lastInsertRowid})`);
++        res.json({ success: true, id: result.lastInsertRowid });
++    } catch (err) {
++        logger.error('Error creating calendar event:', err);
++        res.status(500).json({ error: 'Failed to create event' });
++    }
++});
++
++// Update event
++router.put('/calendar/:id', requireAuth, (req, res) => {
++    const { title, description, event_date, start_time, end_time, location, category } = req.body;
++
++    const db = getDb();
++    try {
++        db.prepare(`
++            UPDATE calendar_events SET
++                title = COALESCE(?, title),
++                description = ?,
++                event_date = COALESCE(?, event_date),
++                start_time = ?,
++                end_time = ?,
++                location = ?,
++                category = COALESCE(?, category),
++                updated_at = datetime('now')
++            WHERE id = ?
++        `).run(title?.trim(), description?.trim() || null, event_date,
++            start_time || null, end_time || null, location?.trim() || 'Galilee MBC',
++            category, req.params.id);
++
++        logger.info(`Calendar event updated: ID ${req.params.id}`);
++        res.json({ success: true });
++    } catch (err) {
++        logger.error('Error updating calendar event:', err);
++        res.status(500).json({ error: 'Failed to update event' });
++    }
++});
++
++// Delete event
++router.delete('/calendar/:id', requireAuth, (req, res) => {
++    const db = getDb();
++    try {
++        db.prepare('DELETE FROM calendar_events WHERE id = ?').run(req.params.id);
++        logger.info(`Calendar event deleted: ID ${req.params.id}`);
++        res.json({ success: true });
++    } catch (err) {
++        logger.error('Error deleting calendar event:', err);
++        res.status(500).json({ error: 'Failed to delete event' });
++    }
++});
++
++// Upcoming events (for dashboard or public)
++router.get('/calendar/upcoming', requireAuth, (req, res) => {
++    const db = getDb();
++    const limit = parseInt(req.query.limit) || 5;
++    const today = new Date().toISOString().split('T')[0];
++
++    const events = db.prepare(
++        'SELECT * FROM calendar_events WHERE event_date >= ? ORDER BY event_date, start_time LIMIT ?'
++    ).all(today, limit);
++
++    res.json({ success: true, events });
++});
++
++// ==================== CHURCH MESSAGING API ====================
++
++// List church messages (inbox)
++router.get('/church-messages', requireAuth, (req, res) => {
++    const db = getDb();
++    const page = parseInt(req.query.page) || 1;
++    const limit = parseInt(req.query.limit) || 50;
++    const offset = (page - 1) * limit;
++    const filter = req.query.filter || 'all'; // all, broadcast, direct
++
++    let query = 'SELECT * FROM church_messages';
++    const params = [];
++
++    if (filter === 'broadcast') {
++        query += ' WHERE is_broadcast = 1';
++    } else if (filter === 'direct') {
++        query += ' WHERE is_broadcast = 0';
++    }
++
++    const total = db.prepare(query.replace('SELECT *', 'SELECT COUNT(*) as count')).get(...params).count;
++
++    query += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
++    params.push(limit, offset);
++
++    const messages = db.prepare(query).all(...params);
++
++    res.json({
++        success: true,
++        messages,
++        pagination: { page, limit, total, pages: Math.ceil(total / limit) }
++    });
++});
++
++// Send church message (direct or broadcast)
++router.post('/church-messages', requireAuth, async (req, res) => {
++    const { subject, body, recipient_ids, channel } = req.body;
++
++    if (!subject || !body) {
++        return res.status(400).json({ error: 'Subject and message body are required' });
++    }
++
++    const db = getDb();
++    const senderName = req.session.adminUsername;
++
++    try {
++        const isBroadcast = !recipient_ids || recipient_ids.length === 0;
++
++        if (isBroadcast) {
++            // Broadcast to all active members
++            const members = db.prepare('SELECT id, first_name, last_name FROM members WHERE is_active = 1').all();
++            const stmt = db.prepare(`
++                INSERT INTO church_messages (sender_name, recipient_id, recipient_name, subject, body, channel, is_broadcast)
++                VALUES (?, ?, ?, ?, ?, ?, 1)
++            `);
++            for (const m of members) {
++                stmt.run(senderName, m.id, `${m.first_name} ${m.last_name}`, subject, body, channel || 'internal');
++            }
++            logger.info(`Broadcast message sent: "${subject}" to ${members.length} members`);
++            res.json({ success: true, sent: members.length, type: 'broadcast' });
++        } else {
++            // Direct to selected members
++            const stmt = db.prepare(`
++                INSERT INTO church_messages (sender_name, recipient_id, recipient_name, subject, body, channel, is_broadcast)
++                VALUES (?, ?, ?, ?, ?, ?, 0)
++            `);
++            for (const id of recipient_ids) {
++                const member = db.prepare('SELECT first_name, last_name FROM members WHERE id = ?').get(id);
++                if (member) {
++                    stmt.run(senderName, id, `${member.first_name} ${member.last_name}`, subject, body, channel || 'internal');
++                }
++            }
++            logger.info(`Direct message sent: "${subject}" to ${recipient_ids.length} member(s)`);
++            res.json({ success: true, sent: recipient_ids.length, type: 'direct' });
++        }
++
++        // Also send via email/SMS if channel is not internal
++        if (channel === 'email' || channel === 'both') {
++            const memberIds = isBroadcast
++                ? db.prepare('SELECT id FROM members WHERE is_active = 1 AND email_subscribed = 1').all().map(m => m.id)
++                : recipient_ids;
++            try {
++                await sendManualMessage(subject, body, memberIds, 'email');
++            } catch (emailErr) {
++                logger.error('Error sending email for church message:', emailErr);
++            }
++        }
++    } catch (err) {
++        logger.error('Error sending church message:', err);
++        res.status(500).json({ error: 'Failed to send message' });
++    }
++});
++
++// Delete church message
++router.delete('/church-messages/:id', requireAuth, (req, res) => {
++    const db = getDb();
++    try {
++        db.prepare('DELETE FROM church_messages WHERE id = ?').run(req.params.id);
++        logger.info(`Church message deleted: ID ${req.params.id}`);
++        res.json({ success: true });
++    } catch (err) {
++        logger.error('Error deleting church message:', err);
++        res.status(500).json({ error: 'Failed to delete message' });
++    }
++});
++
+ // ==================== HELPERS ====================
+ 
+ function parseDateToMMDD(dateStr) {
+diff --git a/views/admin/calendar.html b/views/admin/calendar.html
+new file mode 100644
+index 0000000..db34aa8
+--- /dev/null
++++ b/views/admin/calendar.html
+@@ -0,0 +1,344 @@
++<!-- Admin Layout -->
++<div class="flex min-h-screen">
++    <!-- Sidebar -->
++    <aside class="admin-sidebar w-64 hidden md:block p-6 flex-shrink-0">
++        <div class="text-center mb-8">
++            <div class="text-4xl mb-2">✝</div>
++            <h1 class="text-lg font-display font-bold text-gold-400">Galilee Connect</h1>
++            <p class="text-purple-300 text-xs mt-1">Admin Dashboard</p>
++        </div>
++        <nav class="space-y-1">
++            <a href="/admin" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📊</span> Dashboard
++            </a>
++            <a href="/admin/members" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>👥</span> Members
++            </a>
++            <a href="/admin/messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>✉️</span> Messages
++            </a>
++            <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📖</span> Lessons
++            </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-white active">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>💬</span> Church Messages
++            </a>
++            <div class="border-t border-purple-800 my-4"></div>
++            <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🌐</span> View Registration Page
++            </a>
++            <a href="#" onclick="showChangePasswordModal()" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🔑</span> Change Password
++            </a>
++            <a href="/admin/logout" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🚪</span> Sign Out
++            </a>
++        </nav>
++    </aside>
++
++    <!-- Mobile Header -->
++    <div class="md:hidden fixed top-0 left-0 right-0 bg-purple-900 text-white p-4 z-50 flex items-center justify-between">
++        <div class="flex items-center gap-2">
++            <span class="text-xl">✝</span>
++            <span class="font-display font-bold text-gold-400">Galilee Connect</span>
++        </div>
++        <div class="flex gap-3">
++            <a href="/admin" class="text-white text-sm">📊</a>
++            <a href="/admin/members" class="text-white text-sm">👥</a>
++            <a href="/admin/messages" class="text-white text-sm">✉️</a>
++            <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
++            <a href="/admin/logout" class="text-white text-sm">🚪</a>
++        </div>
++    </div>
++
++    <!-- Main Content -->
++    <main class="flex-1 p-6 md:p-8 md:mt-0 mt-16">
++        <div class="max-w-6xl mx-auto">
++            <!-- Header -->
++            <div class="flex flex-col md:flex-row md:items-center justify-between mb-8">
++                <div>
++                    <h2 class="text-3xl font-display font-bold text-purple-900">Church Calendar</h2>
++                    <p class="text-gray-500">Manage church events and activities</p>
++                </div>
++                <div class="flex gap-3 mt-4 md:mt-0">
++                    <button onclick="showAddEventModal()" class="btn-gold px-4 py-2 rounded-lg font-medium text-sm">
++                        + Add Event
++                    </button>
++                </div>
++            </div>
++
++            <!-- Month Navigation -->
++            <div class="flex items-center justify-between mb-6">
++                <button onclick="changeMonth(-1)" class="btn-primary px-3 py-1.5 rounded-lg text-sm">&larr; Prev</button>
++                <h3 class="text-xl font-display font-bold text-purple-900" id="calendar-month-label">Loading...</h3>
++                <button onclick="changeMonth(1)" class="btn-primary px-3 py-1.5 rounded-lg text-sm">Next &rarr;</button>
++            </div>
++
++            <!-- Calendar Grid -->
++            <div class="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden mb-8">
++                <div class="grid grid-cols-7 bg-purple-900 text-gold-400 text-center text-sm font-semibold">
++                    <div class="py-3">Sun</div>
++                    <div class="py-3">Mon</div>
++                    <div class="py-3">Tue</div>
++                    <div class="py-3">Wed</div>
++                    <div class="py-3">Thu</div>
++                    <div class="py-3">Fri</div>
++                    <div class="py-3">Sat</div>
++                </div>
++                <div id="calendar-grid" class="grid grid-cols-7">
++                    <div class="p-4 text-center text-gray-400">Loading...</div>
++                </div>
++            </div>
++
++            <!-- Events List for Current Month -->
++            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++                <h3 class="text-lg font-display font-bold text-purple-900 mb-4">📋 Events This Month</h3>
++                <div class="overflow-x-auto">
++                    <table class="data-table w-full text-sm">
++                        <thead>
++                            <tr>
++                                <th class="px-4 py-3 text-left">Date</th>
++                                <th class="px-4 py-3 text-left">Event</th>
++                                <th class="px-4 py-3 text-left">Time</th>
++                                <th class="px-4 py-3 text-left">Location</th>
++                                <th class="px-4 py-3 text-left">Category</th>
++                                <th class="px-4 py-3 text-left">Actions</th>
++                            </tr>
++                        </thead>
++                        <tbody id="events-table-body">
++                            <tr><td colspan="6" class="text-center py-8 text-gray-400">Loading...</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++            </div>
++        </div>
++    </main>
++</div>
++
++<script>
++    let calendarYear = new Date().getFullYear();
++    let calendarMonth = new Date().getMonth() + 1;
++
++    const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
++    const CATEGORY_COLORS = {
++        worship: { bg: 'bg-purple-100', text: 'text-purple-800', dot: '#4a1a6b' },
++        'bible-study': { bg: 'bg-blue-100', text: 'text-blue-800', dot: '#2563eb' },
++        youth: { bg: 'bg-orange-100', text: 'text-orange-800', dot: '#ea580c' },
++        fellowship: { bg: 'bg-green-100', text: 'text-green-800', dot: '#16a34a' },
++        meeting: { bg: 'bg-gray-100', text: 'text-gray-800', dot: '#6b7280' },
++        general: { bg: 'bg-yellow-100', text: 'text-yellow-800', dot: '#d4a843' }
++    };
++
++    document.addEventListener('DOMContentLoaded', () => loadCalendar());
++
++    function changeMonth(delta) {
++        calendarMonth += delta;
++        if (calendarMonth > 12) { calendarMonth = 1; calendarYear++; }
++        if (calendarMonth < 1) { calendarMonth = 12; calendarYear--; }
++        loadCalendar();
++    }
++
++    async function loadCalendar() {
++        document.getElementById('calendar-month-label').textContent = `${MONTH_NAMES[calendarMonth - 1]} ${calendarYear}`;
++
++        try {
++            const data = await apiCall(`/api/calendar?year=${calendarYear}&month=${calendarMonth}`);
++            renderCalendarGrid(data.events);
++            renderEventsTable(data.events);
++        } catch (err) {
++            document.getElementById('calendar-grid').innerHTML =
++                '<div class="col-span-7 p-8 text-center text-gray-400">Failed to load calendar</div>';
++        }
++    }
++
++    function renderCalendarGrid(events) {
++        const grid = document.getElementById('calendar-grid');
++        const firstDay = new Date(calendarYear, calendarMonth - 1, 1);
++        const daysInMonth = new Date(calendarYear, calendarMonth, 0).getDate();
++        const startDow = firstDay.getDay();
++        const today = new Date().toISOString().split('T')[0];
++
++        // Map events by day
++        const eventsByDay = {};
++        events.forEach(e => {
++            const day = parseInt(e.event_date.split('-')[2]);
++            if (!eventsByDay[day]) eventsByDay[day] = [];
++            eventsByDay[day].push(e);
++        });
++
++        let html = '';
++
++        // Empty cells before first day
++        for (let i = 0; i < startDow; i++) {
++            html += '<div class="border border-gray-50 p-2 min-h-[80px] bg-gray-50"></div>';
++        }
++
++        // Day cells
++        for (let day = 1; day <= daysInMonth; day++) {
++            const dateStr = `${calendarYear}-${String(calendarMonth).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
++            const isToday = dateStr === today;
++            const dayEvents = eventsByDay[day] || [];
++
++            html += `<div class="border border-gray-50 p-2 min-h-[80px] ${isToday ? 'bg-purple-50' : ''}">`;
++            html += `<div class="text-xs font-semibold ${isToday ? 'text-purple-700' : 'text-gray-500'} mb-1">${day}</div>`;
++
++            dayEvents.forEach(e => {
++                const cat = CATEGORY_COLORS[e.category] || CATEGORY_COLORS.general;
++                html += `<div class="text-xs ${cat.bg} ${cat.text} rounded px-1 py-0.5 mb-0.5 truncate cursor-pointer" onclick="editCalendarEvent(${e.id})" title="${escapeHtml(e.title)}">${escapeHtml(e.title)}</div>`;
++            });
++
++            html += '</div>';
++        }
++
++        grid.innerHTML = html;
++    }
++
++    function renderEventsTable(events) {
++        const tbody = document.getElementById('events-table-body');
++        if (events.length === 0) {
++            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">No events this month</td></tr>';
++            return;
++        }
++
++        tbody.innerHTML = events.map(e => {
++            const cat = CATEGORY_COLORS[e.category] || CATEGORY_COLORS.general;
++            const dateObj = new Date(e.event_date + 'T00:00:00');
++            const dateStr = dateObj.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
++            const timeStr = e.start_time ? formatTime(e.start_time) + (e.end_time ? ' - ' + formatTime(e.end_time) : '') : '—';
++
++            return `
++                <tr class="border-b border-gray-100">
++                    <td class="px-4 py-3 text-gray-700">${dateStr}</td>
++                    <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(e.title)}</td>
++                    <td class="px-4 py-3 text-gray-600">${timeStr}</td>
++                    <td class="px-4 py-3 text-gray-600">${escapeHtml(e.location || '—')}</td>
++                    <td class="px-4 py-3"><span class="badge ${cat.bg} ${cat.text}">${e.category}</span></td>
++                    <td class="px-4 py-3">
++                        <div class="flex gap-2">
++                            <button onclick="editCalendarEvent(${e.id})" class="text-purple-700 hover:text-purple-900 text-sm font-medium">Edit</button>
++                            <button onclick="deleteCalendarEvent(${e.id}, '${escapeHtml(e.title)}')" class="text-red-500 hover:text-red-700 text-sm font-medium">Delete</button>
++                        </div>
++                    </td>
++                </tr>
++            `;
++        }).join('');
++    }
++
++    function formatTime(time) {
++        if (!time) return '';
++        const [h, m] = time.split(':');
++        const hr = parseInt(h);
++        const ampm = hr >= 12 ? 'PM' : 'AM';
++        const hr12 = hr === 0 ? 12 : hr > 12 ? hr - 12 : hr;
++        return `${hr12}:${m} ${ampm}`;
++    }
++
++    function showAddEventModal() {
++        showModal('Add Event', getEventFormHTML());
++    }
++
++    async function editCalendarEvent(id) {
++        try {
++            const data = await apiCall(`/api/calendar/${id}`);
++            showModal('Edit Event', getEventFormHTML(data.event));
++        } catch (err) {
++            showToast('Failed to load event', 'error');
++        }
++    }
++
++    async function saveCalendarEvent(event, id) {
++        event.preventDefault();
++        const form = event.target;
++        const body = {
++            title: form.title.value,
++            description: form.description.value,
++            event_date: form.event_date.value,
++            start_time: form.start_time.value,
++            end_time: form.end_time.value,
++            location: form.location.value,
++            category: form.category.value
++        };
++
++        try {
++            if (id) {
++                await apiCall(`/api/calendar/${id}`, { method: 'PUT', body });
++                showToast('Event updated');
++            } else {
++                await apiCall('/api/calendar', { method: 'POST', body });
++                showToast('Event created');
++            }
++            closeModal();
++            loadCalendar();
++        } catch (err) {}
++    }
++
++    async function deleteCalendarEvent(id, title) {
++        if (!confirm(`Delete "${title}"?`)) return;
++        try {
++            await apiCall(`/api/calendar/${id}`, { method: 'DELETE' });
++            showToast('Event deleted');
++            loadCalendar();
++        } catch (err) {}
++    }
++
++    function getEventFormHTML(event = null) {
++        const e = event || {};
++        return `
++            <form onsubmit="saveCalendarEvent(event, ${e.id || 'null'})">
++                <div class="mb-4">
++                    <label class="block text-sm font-medium text-gray-700 mb-1">Event Title *</label>
++                    <input type="text" name="title" value="${escapeHtml(e.title || '')}" required
++                        class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                </div>
++                <div class="grid grid-cols-2 gap-4 mb-4">
++                    <div>
++                        <label class="block text-sm font-medium text-gray-700 mb-1">Date *</label>
++                        <input type="date" name="event_date" value="${e.event_date || ''}" required
++                            class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                    </div>
++                    <div>
++                        <label class="block text-sm font-medium text-gray-700 mb-1">Category</label>
++                        <select name="category" class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                            <option value="worship" ${e.category === 'worship' ? 'selected' : ''}>Worship Service</option>
++                            <option value="bible-study" ${e.category === 'bible-study' ? 'selected' : ''}>Bible Study</option>
++                            <option value="youth" ${e.category === 'youth' ? 'selected' : ''}>Youth Ministry</option>
++                            <option value="fellowship" ${e.category === 'fellowship' ? 'selected' : ''}>Fellowship</option>
++                            <option value="meeting" ${e.category === 'meeting' ? 'selected' : ''}>Meeting</option>
++                            <option value="general" ${(!e.category || e.category === 'general') ? 'selected' : ''}>General</option>
++                        </select>
++                    </div>
++                </div>
++                <div class="grid grid-cols-2 gap-4 mb-4">
++                    <div>
++                        <label class="block text-sm font-medium text-gray-700 mb-1">Start Time</label>
++                        <input type="time" name="start_time" value="${e.start_time || ''}"
++                            class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                    </div>
++                    <div>
++                        <label class="block text-sm font-medium text-gray-700 mb-1">End Time</label>
++                        <input type="time" name="end_time" value="${e.end_time || ''}"
++                            class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                    </div>
++                </div>
++                <div class="mb-4">
++                    <label class="block text-sm font-medium text-gray-700 mb-1">Location</label>
++                    <input type="text" name="location" value="${escapeHtml(e.location || 'Galilee MBC')}"
++                        class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                </div>
++                <div class="mb-4">
++                    <label class="block text-sm font-medium text-gray-700 mb-1">Description</label>
++                    <textarea name="description" rows="3"
++                        class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">${escapeHtml(e.description || '')}</textarea>
++                </div>
++                <button type="submit" class="btn-primary w-full py-2.5 rounded-lg font-medium">
++                    ${e.id ? 'Update Event' : 'Create Event'}
++                </button>
++            </form>
++        `;
++    }
++</script>
+diff --git a/views/admin/church-messages.html b/views/admin/church-messages.html
+new file mode 100644
+index 0000000..81514db
+--- /dev/null
++++ b/views/admin/church-messages.html
+@@ -0,0 +1,320 @@
++<!-- Admin Layout -->
++<div class="flex min-h-screen">
++    <!-- Sidebar -->
++    <aside class="admin-sidebar w-64 hidden md:block p-6 flex-shrink-0">
++        <div class="text-center mb-8">
++            <div class="text-4xl mb-2">✝</div>
++            <h1 class="text-lg font-display font-bold text-gold-400">Galilee Connect</h1>
++            <p class="text-purple-300 text-xs mt-1">Admin Dashboard</p>
++        </div>
++        <nav class="space-y-1">
++            <a href="/admin" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📊</span> Dashboard
++            </a>
++            <a href="/admin/members" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>👥</span> Members
++            </a>
++            <a href="/admin/messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>✉️</span> Messages
++            </a>
++            <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📖</span> Lessons
++            </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-white active">
++                <span>💬</span> Church Messages
++            </a>
++            <div class="border-t border-purple-800 my-4"></div>
++            <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🌐</span> View Registration Page
++            </a>
++            <a href="#" onclick="showChangePasswordModal()" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🔑</span> Change Password
++            </a>
++            <a href="/admin/logout" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
++                <span>🚪</span> Sign Out
++            </a>
++        </nav>
++    </aside>
++
++    <!-- Mobile Header -->
++    <div class="md:hidden fixed top-0 left-0 right-0 bg-purple-900 text-white p-4 z-50 flex items-center justify-between">
++        <div class="flex items-center gap-2">
++            <span class="text-xl">✝</span>
++            <span class="font-display font-bold text-gold-400">Galilee Connect</span>
++        </div>
++        <div class="flex gap-3">
++            <a href="/admin" class="text-white text-sm">📊</a>
++            <a href="/admin/members" class="text-white text-sm">👥</a>
++            <a href="/admin/messages" class="text-white text-sm">✉️</a>
++            <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
++            <a href="/admin/logout" class="text-white text-sm">🚪</a>
++        </div>
++    </div>
++
++    <!-- Main Content -->
++    <main class="flex-1 p-6 md:p-8 md:mt-0 mt-16">
++        <div class="max-w-6xl mx-auto">
++            <!-- Header -->
++            <div class="flex flex-col md:flex-row md:items-center justify-between mb-8">
++                <div>
++                    <h2 class="text-3xl font-display font-bold text-purple-900">Church Messages</h2>
++                    <p class="text-gray-500">Send direct or broadcast messages to members</p>
++                </div>
++                <div class="flex gap-3 mt-4 md:mt-0">
++                    <button onclick="showComposeModal()" class="btn-gold px-4 py-2 rounded-lg font-medium text-sm">
++                        + Compose Message
++                    </button>
++                </div>
++            </div>
++
++            <!-- Quick Actions -->
++            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
++                <div class="stat-card bg-white rounded-xl p-5 shadow-sm border border-gray-100 cursor-pointer" onclick="showComposeModal('broadcast')">
++                    <div class="text-3xl mb-2">📢</div>
++                    <div class="font-bold text-purple-900">Broadcast</div>
++                    <div class="text-sm text-gray-500">Send to all active members</div>
++                </div>
++                <div class="stat-card bg-white rounded-xl p-5 shadow-sm border border-gray-100 cursor-pointer" onclick="showComposeModal('direct')">
++                    <div class="text-3xl mb-2">👤</div>
++                    <div class="font-bold text-purple-900">Direct Message</div>
++                    <div class="text-sm text-gray-500">Send to specific members</div>
++                </div>
++                <div class="stat-card bg-white rounded-xl p-5 shadow-sm border border-gray-100 cursor-pointer" onclick="showComposeModal('email')">
++                    <div class="text-3xl mb-2">✉️</div>
++                    <div class="font-bold text-purple-900">Email Blast</div>
++                    <div class="text-sm text-gray-500">Send via email to all members</div>
++                </div>
++            </div>
++
++            <!-- Filter Tabs -->
++            <div class="flex gap-2 mb-4">
++                <button onclick="loadChurchMessages('all')" id="filter-all"
++                    class="px-4 py-2 rounded-lg text-sm font-medium bg-purple-700 text-white">All</button>
++                <button onclick="loadChurchMessages('broadcast')" id="filter-broadcast"
++                    class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200">Broadcasts</button>
++                <button onclick="loadChurchMessages('direct')" id="filter-direct"
++                    class="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200">Direct</button>
++            </div>
++
++            <!-- Messages List -->
++            <div class="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
++                <div class="overflow-x-auto">
++                    <table class="data-table w-full text-sm">
++                        <thead>
++                            <tr>
++                                <th class="px-4 py-3 text-left">Date</th>
++                                <th class="px-4 py-3 text-left">From</th>
++                                <th class="px-4 py-3 text-left">To</th>
++                                <th class="px-4 py-3 text-left">Subject</th>
++                                <th class="px-4 py-3 text-left">Type</th>
++                                <th class="px-4 py-3 text-left">Actions</th>
++                            </tr>
++                        </thead>
++                        <tbody id="church-messages-body">
++                            <tr><td colspan="6" class="text-center py-8 text-gray-400">Loading...</td></tr>
++                        </tbody>
++                    </table>
++                </div>
++                <div id="church-messages-pagination" class="mt-4 flex justify-center gap-2"></div>
++            </div>
++        </div>
++    </main>
++</div>
++
++<script>
++    let currentFilter = 'all';
++    let currentPage = 1;
++
++    document.addEventListener('DOMContentLoaded', () => loadChurchMessages('all'));
++
++    async function loadChurchMessages(filter = 'all', page = 1) {
++        currentFilter = filter;
++        currentPage = page;
++
++        // Update filter button styles
++        ['all', 'broadcast', 'direct'].forEach(f => {
++            const btn = document.getElementById(`filter-${f}`);
++            if (f === filter) {
++                btn.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-purple-700 text-white';
++            } else {
++                btn.className = 'px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-700 hover:bg-gray-200';
++            }
++        });
++
++        try {
++            const data = await apiCall(`/api/church-messages?filter=${filter}&page=${page}`);
++            renderChurchMessages(data.messages, data.pagination);
++        } catch (err) {
++            document.getElementById('church-messages-body').innerHTML =
++                '<tr><td colspan="6" class="text-center py-8 text-gray-400">Failed to load messages</td></tr>';
++        }
++    }
++
++    function renderChurchMessages(messages, pagination) {
++        const tbody = document.getElementById('church-messages-body');
++        if (messages.length === 0) {
++            tbody.innerHTML = '<tr><td colspan="6" class="text-center py-8 text-gray-400">No messages found</td></tr>';
++            document.getElementById('church-messages-pagination').innerHTML = '';
++            return;
++        }
++
++        tbody.innerHTML = messages.map(m => `
++            <tr class="border-b border-gray-100">
++                <td class="px-4 py-3 text-gray-500">${formatDate(m.created_at)}</td>
++                <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(m.sender_name)}</td>
++                <td class="px-4 py-3 text-gray-600">${m.is_broadcast ? '<span class="badge badge-info">All Members</span>' : escapeHtml(m.recipient_name || '—')}</td>
++                <td class="px-4 py-3 text-gray-700">${escapeHtml(m.subject)}</td>
++                <td class="px-4 py-3">
++                    <span class="badge ${m.is_broadcast ? 'badge-warning' : 'badge-success'}">
++                        ${m.is_broadcast ? '📢 Broadcast' : '👤 Direct'}
++                    </span>
++                </td>
++                <td class="px-4 py-3">
++                    <div class="flex gap-2">
++                        <button onclick="viewChurchMessage(${m.id}, '${escapeHtml(m.subject)}', '${escapeHtml(m.body)}', '${escapeHtml(m.sender_name)}', '${escapeHtml(m.recipient_name || 'All Members')}', '${m.created_at}')"
++                            class="text-purple-700 hover:text-purple-900 text-sm font-medium">View</button>
++                        <button onclick="deleteChurchMessage(${m.id})"
++                            class="text-red-500 hover:text-red-700 text-sm font-medium">Delete</button>
++                    </div>
++                </td>
++            </tr>
++        `).join('');
++
++        // Pagination
++        const pagDiv = document.getElementById('church-messages-pagination');
++        if (pagination.pages > 1) {
++            let pagHtml = '';
++            for (let p = 1; p <= pagination.pages; p++) {
++                pagHtml += `<button onclick="loadChurchMessages('${currentFilter}', ${p})"
++                    class="px-3 py-1 rounded text-sm ${p === pagination.page ? 'bg-purple-700 text-white' : 'bg-gray-100 text-gray-700'}">${p}</button>`;
++            }
++            pagDiv.innerHTML = pagHtml;
++        } else {
++            pagDiv.innerHTML = '';
++        }
++    }
++
++    function viewChurchMessage(id, subject, body, sender, recipient, date) {
++        const content = `
++            <div class="space-y-3">
++                <div class="flex justify-between text-sm text-gray-500">
++                    <span>From: <strong class="text-gray-700">${sender}</strong></span>
++                    <span>${formatDate(date)}</span>
++                </div>
++                <div class="text-sm text-gray-500">To: <strong class="text-gray-700">${recipient}</strong></div>
++                <div class="border-t border-gray-100 pt-3">
++                    <h4 class="font-bold text-gray-900 mb-2">${subject}</h4>
++                    <p class="text-gray-700 whitespace-pre-wrap">${body}</p>
++                </div>
++            </div>
++        `;
++        showModal('Message Details', content);
++    }
++
++    async function deleteChurchMessage(id) {
++        if (!confirm('Delete this message?')) return;
++        try {
++            await apiCall(`/api/church-messages/${id}`, { method: 'DELETE' });
++            showToast('Message deleted');
++            loadChurchMessages(currentFilter, currentPage);
++        } catch (err) {}
++    }
++
++    async function showComposeModal(type) {
++        let recipientSection = '';
++
++        if (type === 'direct') {
++            // Load members for selection
++            try {
++                const data = await apiCall('/api/members');
++                const options = data.members.map(m =>
++                    `<option value="${m.id}">${escapeHtml(m.first_name)} ${escapeHtml(m.last_name)}${m.email ? ' (' + escapeHtml(m.email) + ')' : ''}</option>`
++                ).join('');
++                recipientSection = `
++                    <div class="mb-4">
++                        <label class="block text-sm font-medium text-gray-700 mb-1">Recipients *</label>
++                        <select name="recipient_ids" multiple size="5"
++                            class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg">
++                            ${options}
++                        </select>
++                        <p class="text-xs text-gray-400 mt-1">Hold Ctrl/Cmd to select multiple members</p>
++                    </div>
++                `;
++            } catch (err) {
++                showToast('Failed to load members', 'error');
++                return;
++            }
++        } else if (type === 'broadcast') {
++            recipientSection = `
++                <div class="mb-4 bg-yellow-50 border border-yellow-200 rounded-lg p-3">
++                    <p class="text-sm text-yellow-800">📢 This message will be sent to <strong>all active members</strong>.</p>
++                </div>
++            `;
++        } else if (type === 'email') {
++            recipientSection = `
++                <div class="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
++                    <p class="text-sm text-blue-800">✉️ This message will be emailed to all email-subscribed members.</p>
++                </div>
++                <input type="hidden" name="channel" value="email">
++            `;
++        }
++
++        const content = `
++            <form onsubmit="sendChurchMessage(event, '${type || 'direct'}')">
++                ${recipientSection}
++                <div class="mb-4">
++                    <label class="block text-sm font-medium text-gray-700 mb-1">Subject *</label>
++                    <input type="text" name="subject" required
++                        class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg"
++                        placeholder="Message subject">
++                </div>
++                <div class="mb-4">
++                    <label class="block text-sm font-medium text-gray-700 mb-1">Message *</label>
++                    <textarea name="body" rows="6" required
++                        class="form-input w-full px-3 py-2 border border-gray-300 rounded-lg"
++                        placeholder="Type your message here..."></textarea>
++                </div>
++                <button type="submit" class="btn-primary w-full py-2.5 rounded-lg font-medium">
++                    Send Message
++                </button>
++            </form>
++        `;
++
++        const titles = { broadcast: 'Broadcast Message', direct: 'Direct Message', email: 'Email Blast' };
++        showModal(titles[type] || 'Compose Message', content);
++    }
++
++    async function sendChurchMessage(event, type) {
++        event.preventDefault();
++        const form = event.target;
++
++        const body = {
++            subject: form.subject.value,
++            body: form.body.value,
++            channel: form.channel ? form.channel.value : 'internal'
++        };
++
++        if (type === 'direct') {
++            const select = form.querySelector('[name="recipient_ids"]');
++            body.recipient_ids = Array.from(select.selectedOptions).map(o => parseInt(o.value));
++            if (body.recipient_ids.length === 0) {
++                showToast('Please select at least one recipient', 'error');
++                return;
++            }
++        } else if (type === 'email') {
++            body.channel = 'email';
++        }
++
++        try {
++            const result = await apiCall('/api/church-messages', { method: 'POST', body });
++            showToast(`Message sent to ${result.sent} member(s)`);
++            closeModal();
++            loadChurchMessages(currentFilter, currentPage);
++        } catch (err) {}
++    }
++</script>
+diff --git a/views/admin/dashboard.html b/views/admin/dashboard.html
+index 765d54d..7428c9b 100644
+--- a/views/admin/dashboard.html
++++ b/views/admin/dashboard.html
+@@ -20,6 +20,12 @@
+             <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
+                 <span>📖</span> Lessons
+             </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>💬</span> Church Messages
++            </a>
+             <div class="border-t border-purple-800 my-4"></div>
+             <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
+                 <span>🌐</span> View Registration Page
+@@ -44,6 +50,8 @@
+             <a href="/admin/members" class="text-white text-sm">👥</a>
+             <a href="/admin/messages" class="text-white text-sm">✉️</a>
+             <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
+             <a href="/admin/logout" class="text-white text-sm">🚪</a>
+         </div>
+     </div>
+diff --git a/views/admin/lessons.html b/views/admin/lessons.html
+index 07fa9b9..9bf246f 100644
+--- a/views/admin/lessons.html
++++ b/views/admin/lessons.html
+@@ -20,6 +20,12 @@
+             <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-white active">
+                 <span>📖</span> Lessons
+             </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>💬</span> Church Messages
++            </a>
+             <div class="border-t border-purple-800 my-4"></div>
+             <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
+                 <span>🌐</span> View Registration Page
+@@ -44,6 +50,8 @@
+             <a href="/admin/members" class="text-white text-sm">👥</a>
+             <a href="/admin/messages" class="text-white text-sm">✉️</a>
+             <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
+             <a href="/admin/logout" class="text-white text-sm">🚪</a>
+         </div>
+     </div>
+diff --git a/views/admin/members.html b/views/admin/members.html
+index 4a82021..f3f32a3 100644
+--- a/views/admin/members.html
++++ b/views/admin/members.html
+@@ -20,6 +20,12 @@
+             <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
+                 <span>📖</span> Lessons
+             </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>💬</span> Church Messages
++            </a>
+             <div class="border-t border-purple-800 my-4"></div>
+             <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
+                 <span>🌐</span> View Registration Page
+@@ -44,6 +50,8 @@
+             <a href="/admin/members" class="text-white text-sm">👥</a>
+             <a href="/admin/messages" class="text-white text-sm">✉️</a>
+             <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
+             <a href="/admin/logout" class="text-white text-sm">🚪</a>
+         </div>
+     </div>
+diff --git a/views/admin/messages.html b/views/admin/messages.html
+index e3b7588..fe446be 100644
+--- a/views/admin/messages.html
++++ b/views/admin/messages.html
+@@ -20,6 +20,12 @@
+             <a href="/admin/lessons" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
+                 <span>📖</span> Lessons
+             </a>
++            <a href="/admin/calendar" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>📅</span> Calendar
++            </a>
++            <a href="/admin/church-messages" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-200">
++                <span>💬</span> Church Messages
++            </a>
+             <div class="border-t border-purple-800 my-4"></div>
+             <a href="/" target="_blank" class="flex items-center gap-3 px-4 py-3 rounded-lg text-purple-300 text-sm">
+                 <span>🌐</span> View Registration Page
+@@ -44,6 +50,8 @@
+             <a href="/admin/members" class="text-white text-sm">👥</a>
+             <a href="/admin/messages" class="text-white text-sm">✉️</a>
+             <a href="/admin/lessons" class="text-white text-sm">📖</a>
++            <a href="/admin/calendar" class="text-white text-sm">📅</a>
++            <a href="/admin/church-messages" class="text-white text-sm">💬</a>
+             <a href="/admin/logout" class="text-white text-sm">🚪</a>
+         </div>
+     </div>
+-- 
+2.43.0
+

@@ -19,6 +19,9 @@
               <span class="badge"><%= unreadCount %></span>
             <% } %>
           </a>
+          <% if (user.role === 'admin' || user.role === 'pastor') { %>
+            <a href="/admin">Admin</a>
+          <% } %>
           <span class="nav-user">Hi, <%= user.full_name.split(' ')[0] %></span>
           <a href="/logout">Logout</a>
         <% } else { %>

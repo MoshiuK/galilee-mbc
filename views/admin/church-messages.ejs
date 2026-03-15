@@ -1,0 +1,82 @@
+<div class="container">
+  <div class="admin-header">
+    <h1>Church Messages</h1>
+  </div>
+
+  <div class="admin-nav">
+    <a href="/admin" class="admin-nav-item">Dashboard</a>
+    <a href="/admin/calendar" class="admin-nav-item">Calendar</a>
+    <a href="/admin/church-messages" class="admin-nav-item active">Church Messages</a>
+    <a href="/admin/members" class="admin-nav-item">Members</a>
+  </div>
+
+  <!-- New Message Form -->
+  <div class="card">
+    <h2>Post New Message</h2>
+    <form method="POST" action="/admin/church-messages">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="title">Title</label>
+          <input type="text" id="title" name="title" required>
+        </div>
+        <div class="form-group">
+          <label for="category">Category</label>
+          <select id="category" name="category">
+            <% categories.forEach(cat => { %>
+              <option value="<%= cat.value %>"<%= activeCategory === cat.value ? ' selected' : '' %>><%= cat.label %></option>
+            <% }) %>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="body">Message</label>
+        <textarea id="body" name="body" rows="4" required></textarea>
+      </div>
+      <div class="form-group">
+        <label><input type="checkbox" name="pinned"> Pin this message</label>
+      </div>
+      <button type="submit" class="btn">Post Message</button>
+    </form>
+  </div>
+
+  <!-- Filter -->
+  <div class="card">
+    <div class="filter-bar">
+      <a href="/admin/church-messages" class="btn btn-sm<%= !activeCategory ? '' : ' btn-outline' %>">All</a>
+      <% categories.forEach(cat => { %>
+        <a href="/admin/church-messages?category=<%= cat.value %>" class="btn btn-sm<%= activeCategory === cat.value ? '' : ' btn-outline' %>"><%= cat.label %></a>
+      <% }) %>
+    </div>
+
+    <% if (messages.length === 0) { %>
+      <p class="text-muted text-center" style="margin-top: 1rem;">No messages yet.</p>
+    <% } else { %>
+      <div class="church-msg-list">
+        <% messages.forEach(msg => { %>
+          <div class="church-msg-item<%= msg.pinned ? ' church-msg-pinned' : '' %>">
+            <div class="church-msg-header">
+              <div>
+                <% if (msg.pinned) { %><span class="pin-icon">&#128204;</span><% } %>
+                <strong><%= msg.title %></strong>
+                <span class="msg-cat cat-badge-<%= msg.category %>"><%= msg.category %></span>
+              </div>
+              <span class="message-date"><%= msg.created_at %></span>
+            </div>
+            <p class="church-msg-body"><%= msg.body %></p>
+            <div class="church-msg-footer">
+              <span class="text-muted">Posted by <%= msg.sender_name %></span>
+              <div class="action-cell">
+                <form method="POST" action="/admin/church-messages/<%= msg.id %>/pin" class="inline-form">
+                  <button type="submit" class="btn btn-outline btn-sm"><%= msg.pinned ? 'Unpin' : 'Pin' %></button>
+                </form>
+                <form method="POST" action="/admin/church-messages/<%= msg.id %>/delete" class="inline-form" onsubmit="return confirm('Delete this message?')">
+                  <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+              </div>
+            </div>
+          </div>
+        <% }) %>
+      </div>
+    <% } %>
+  </div>
+</div>

@@ -41,6 +41,7 @@ app.use('/', require('./routes/index'));
 app.use('/', require('./routes/auth'));
 app.use('/calendar', require('./routes/calendar'));
 app.use('/messages', require('./routes/messages'));
+app.use('/admin', require('./routes/admin'));
 
 // 404 handler
 app.use((req, res) => {

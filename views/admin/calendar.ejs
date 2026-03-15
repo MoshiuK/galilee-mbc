@@ -1,0 +1,100 @@
+<div class="container">
+  <div class="admin-header">
+    <h1>Manage Calendar</h1>
+  </div>
+
+  <div class="admin-nav">
+    <a href="/admin" class="admin-nav-item">Dashboard</a>
+    <a href="/admin/calendar" class="admin-nav-item active">Calendar</a>
+    <a href="/admin/church-messages" class="admin-nav-item">Church Messages</a>
+    <a href="/admin/members" class="admin-nav-item">Members</a>
+  </div>
+
+  <!-- New Event Form -->
+  <div class="card">
+    <h2>Add New Event</h2>
+    <form method="POST" action="/admin/calendar">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="title">Title</label>
+          <input type="text" id="title" name="title" required>
+        </div>
+        <div class="form-group">
+          <label for="category">Category</label>
+          <select id="category" name="category">
+            <% categories.forEach(cat => { %>
+              <option value="<%= cat.value %>"><%= cat.label %></option>
+            <% }) %>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="event_date">Date</label>
+          <input type="date" id="event_date" name="event_date" required>
+        </div>
+        <div class="form-group">
+          <label for="start_time">Start Time</label>
+          <input type="time" id="start_time" name="start_time">
+        </div>
+        <div class="form-group">
+          <label for="end_time">End Time</label>
+          <input type="time" id="end_time" name="end_time">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="location">Location</label>
+        <input type="text" id="location" name="location" value="Galilee MBC">
+      </div>
+      <div class="form-group">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" rows="3"></textarea>
+      </div>
+      <button type="submit" class="btn">Add Event</button>
+    </form>
+  </div>
+
+  <!-- Events List -->
+  <div class="card">
+    <div class="calendar-header">
+      <a href="/admin/calendar?year=<%= prevYear %>&month=<%= prevMonth %>" class="btn btn-outline">&larr; Prev</a>
+      <h2><%= monthName %> <%= year %></h2>
+      <a href="/admin/calendar?year=<%= nextYear %>&month=<%= nextMonth %>" class="btn btn-outline">Next &rarr;</a>
+    </div>
+
+    <% if (events.length === 0) { %>
+      <p class="text-muted text-center">No events this month.</p>
+    <% } else { %>
+      <table class="admin-table">
+        <thead>
+          <tr>
+            <th>Date</th>
+            <th>Title</th>
+            <th>Time</th>
+            <th>Location</th>
+            <th>Category</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% events.forEach(event => { %>
+            <tr>
+              <td><%= event.event_date %></td>
+              <td><strong><%= event.title %></strong></td>
+              <td><%= event.start_time || '' %><%= event.end_time ? ' - ' + event.end_time : '' %></td>
+              <td><%= event.location %></td>
+              <td><span class="cal-event cat-<%= event.category %>" style="display:inline-block;"><%= event.category %></span></td>
+              <td class="action-cell">
+                <a href="/calendar/event/<%= event.id %>" class="btn btn-outline btn-sm">View</a>
+                <a href="/calendar/event/<%= event.id %>/edit" class="btn btn-outline btn-sm">Edit</a>
+                <form method="POST" action="/admin/calendar/<%= event.id %>/delete" class="inline-form" onsubmit="return confirm('Delete this event?')">
+                  <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+</div>

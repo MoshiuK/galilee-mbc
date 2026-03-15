@@ -1,0 +1,42 @@
+<div class="container">
+  <div class="calendar-header">
+    <a href="/calendar?year=<%= prevYear %>&month=<%= prevMonth %>" class="btn btn-outline">&larr; Prev</a>
+    <h1><%= monthName %> <%= year %></h1>
+    <a href="/calendar?year=<%= nextYear %>&month=<%= nextMonth %>" class="btn btn-outline">Next &rarr;</a>
+  </div>
+
+  <% if (user && (user.role === 'admin' || user.role === 'pastor')) { %>
+    <div class="calendar-actions">
+      <a href="/calendar/new" class="btn">+ New Event</a>
+    </div>
+  <% } %>
+
+  <div class="calendar-grid">
+    <div class="cal-head">Sun</div>
+    <div class="cal-head">Mon</div>
+    <div class="cal-head">Tue</div>
+    <div class="cal-head">Wed</div>
+    <div class="cal-head">Thu</div>
+    <div class="cal-head">Fri</div>
+    <div class="cal-head">Sat</div>
+
+    <% for (let i = 0; i < startDow; i++) { %>
+      <div class="cal-day cal-empty"></div>
+    <% } %>
+
+    <% for (let day = 1; day <= daysInMonth; day++) { %>
+      <% const todayStr = new Date().toISOString().split('T')[0]; %>
+      <% const cellDate = `${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`; %>
+      <div class="cal-day<%= cellDate === todayStr ? ' cal-today' : '' %>">
+        <span class="cal-day-num"><%= day %></span>
+        <% if (eventsByDay[day]) { %>
+          <% eventsByDay[day].forEach(ev => { %>
+            <a href="/calendar/event/<%= ev.id %>" class="cal-event cat-<%= ev.category %>">
+              <%= ev.title %>
+            </a>
+          <% }) %>
+        <% } %>
+      </div>
+    <% } %>
+  </div>
+</div>

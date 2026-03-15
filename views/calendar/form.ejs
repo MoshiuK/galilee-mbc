@@ -1,0 +1,44 @@
+<div class="container">
+  <a href="/calendar" class="back-link">&larr; Back to Calendar</a>
+
+  <div class="card">
+    <h1><%= event ? 'Edit Event' : 'New Event' %></h1>
+    <form method="POST" action="<%= event ? '/calendar/event/' + event.id : '/calendar' %>">
+      <div class="form-group">
+        <label for="title">Event Title *</label>
+        <input type="text" id="title" name="title" value="<%= event ? event.title : '' %>" required>
+      </div>
+      <div class="form-group">
+        <label for="event_date">Date *</label>
+        <input type="date" id="event_date" name="event_date" value="<%= event ? event.event_date : '' %>" required>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="start_time">Start Time</label>
+          <input type="time" id="start_time" name="start_time" value="<%= event && event.start_time ? event.start_time : '' %>">
+        </div>
+        <div class="form-group">
+          <label for="end_time">End Time</label>
+          <input type="time" id="end_time" name="end_time" value="<%= event && event.end_time ? event.end_time : '' %>">
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="location">Location</label>
+        <input type="text" id="location" name="location" value="<%= event ? event.location : 'Galilee MBC' %>">
+      </div>
+      <div class="form-group">
+        <label for="category">Category</label>
+        <select id="category" name="category">
+          <% categories.forEach(cat => { %>
+            <option value="<%= cat.value %>" <%= event && event.category === cat.value ? 'selected' : '' %>><%= cat.label %></option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="description">Description</label>
+        <textarea id="description" name="description" rows="4"><%= event && event.description ? event.description : '' %></textarea>
+      </div>
+      <button type="submit" class="btn btn-full"><%= event ? 'Update Event' : 'Create Event' %></button>
+    </form>
+  </div>
+</div>

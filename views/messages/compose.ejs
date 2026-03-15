@@ -1,0 +1,27 @@
+<div class="container">
+  <a href="/messages" class="back-link">&larr; Back to Messages</a>
+
+  <div class="card">
+    <h1>New Message</h1>
+    <form method="POST" action="/messages">
+      <div class="form-group">
+        <label for="recipient_id">To</label>
+        <select id="recipient_id" name="recipient_id" required>
+          <option value="">Select a member...</option>
+          <% users.forEach(u => { %>
+            <option value="<%= u.id %>" <%= replyTo == u.id ? 'selected' : '' %>><%= u.full_name %> (<%= u.role %>)</option>
+          <% }) %>
+        </select>
+      </div>
+      <div class="form-group">
+        <label for="subject">Subject</label>
+        <input type="text" id="subject" name="subject" value="<%= replySubject %>" required>
+      </div>
+      <div class="form-group">
+        <label for="body">Message</label>
+        <textarea id="body" name="body" rows="6" required></textarea>
+      </div>
+      <button type="submit" class="btn btn-full">Send Message</button>
+    </form>
+  </div>
+</div>

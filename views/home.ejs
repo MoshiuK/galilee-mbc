@@ -1,0 +1,57 @@
+<div class="container">
+  <div class="hero">
+    <h1>Welcome to Galilee Missionary Baptist Church</h1>
+    <p class="hero-subtitle">Florence, Alabama &mdash; A place where faith grows and community thrives</p>
+  </div>
+
+  <div class="home-grid">
+    <div class="card">
+      <h2>This Week's Services</h2>
+      <ul class="service-list">
+        <li><strong>Sunday Worship</strong> &mdash; 11:00 AM</li>
+        <li><strong>Wednesday Bible Study</strong> &mdash; 7:00 PM</li>
+        <li><strong>Friday Youth Night</strong> &mdash; 6:30 PM</li>
+        <li><strong>Daily Prayer Line</strong> &mdash; Open</li>
+      </ul>
+    </div>
+
+    <div class="card">
+      <h2>Upcoming Events</h2>
+      <% if (upcomingEvents.length === 0) { %>
+        <p class="text-muted">No upcoming events scheduled.</p>
+      <% } else { %>
+        <ul class="event-list">
+          <% upcomingEvents.forEach(event => { %>
+            <li>
+              <a href="/calendar/event/<%= event.id %>">
+                <strong><%= event.title %></strong>
+                <span class="event-date"><%= new Date(event.event_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) %></span>
+                <% if (event.start_time) { %>
+                  <span class="event-time"><%= event.start_time %></span>
+                <% } %>
+              </a>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+      <a href="/calendar" class="btn btn-outline">View Full Calendar</a>
+    </div>
+
+    <div class="card">
+      <h2>Connect With Us</h2>
+      <p>Whether you're visiting for the first time or have been with us for years, you belong here.</p>
+      <% if (!user) { %>
+        <a href="/register" class="btn">Join Our Community</a>
+      <% } else { %>
+        <a href="/messages/compose" class="btn">Send a Message</a>
+      <% } %>
+    </div>
+  </div>
+
+  <div class="card scripture-card">
+    <blockquote>
+      "Count it all joy when ye fall into divers temptations; knowing this, that the trying of your faith worketh patience."
+      <cite>&mdash; James 1:2&ndash;3 (KJV)</cite>
+    </blockquote>
+  </div>
+</div>

@@ -1,0 +1,37 @@
+<div class="container">
+  <a href="/messages" class="back-link">&larr; Back to Messages</a>
+
+  <h1>Conversation with <%= otherUser.full_name %></h1>
+
+  <div class="conversation">
+    <% if (messages.length === 0) { %>
+      <p class="text-muted">No messages in this conversation yet.</p>
+    <% } else { %>
+      <% messages.forEach(msg => { %>
+        <div class="conv-message <%= msg.sender_id === user.id ? 'conv-sent' : 'conv-received' %>">
+          <div class="conv-meta">
+            <strong><%= msg.sender_name %></strong>
+            <span><%= new Date(msg.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) %></span>
+          </div>
+          <div class="conv-subject"><%= msg.subject %></div>
+          <div class="conv-body"><%= msg.body %></div>
+        </div>
+      <% }) %>
+    <% } %>
+  </div>
+
+  <div class="card conv-reply">
+    <h3>Reply</h3>
+    <form method="POST" action="/messages/conversation/<%= otherUser.id %>">
+      <div class="form-group">
+        <label for="subject">Subject</label>
+        <input type="text" id="subject" name="subject" value="<%= messages.length > 0 ? 'Re: ' + messages[messages.length - 1].subject.replace(/^Re: /, '') : '' %>" required>
+      </div>
+      <div class="form-group">
+        <label for="body">Message</label>
+        <textarea id="body" name="body" rows="4" required></textarea>
+      </div>
+      <button type="submit" class="btn">Send Reply</button>
+    </form>
+  </div>
+</div>

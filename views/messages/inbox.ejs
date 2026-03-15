@@ -1,0 +1,33 @@
+<div class="container">
+  <div class="messages-header">
+    <h1>Messages</h1>
+    <a href="/messages/compose" class="btn">+ New Message</a>
+  </div>
+
+  <div class="tab-bar">
+    <a href="/messages?tab=inbox" class="tab <%= tab === 'inbox' ? 'tab-active' : '' %>">Inbox</a>
+    <a href="/messages?tab=sent" class="tab <%= tab === 'sent' ? 'tab-active' : '' %>">Sent</a>
+  </div>
+
+  <% if (messages.length === 0) { %>
+    <div class="card text-center">
+      <p class="text-muted">No messages yet.</p>
+    </div>
+  <% } else { %>
+    <div class="message-list">
+      <% messages.forEach(msg => { %>
+        <% const otherUserId = tab === 'inbox' ? msg.sender_id : msg.recipient_id; %>
+        <a href="/messages/conversation/<%= otherUserId %>" class="message-item <%= tab === 'inbox' && !msg.read ? 'message-unread' : '' %>">
+          <div class="message-from">
+            <%= tab === 'inbox' ? msg.sender_name : 'To: ' + msg.recipient_name %>
+          </div>
+          <div class="message-subject"><%= msg.subject %></div>
+          <div class="message-preview"><%= msg.body.substring(0, 80) %><%= msg.body.length > 80 ? '...' : '' %></div>
+          <div class="message-date">
+            <%= new Date(msg.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) %>
+          </div>
+        </a>
+      <% }) %>
+    </div>
+  <% } %>
+</div>

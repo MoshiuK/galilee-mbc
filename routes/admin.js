@@ -5,6 +5,7 @@ const calendarService = require('../services/calendarService');
 const messageService = require('../services/messageService');
 const churchMessageService = require('../services/churchMessageService');
 const authService = require('../services/authService');
+const lessonService = require('../services/lessonService');
 
 const CATEGORIES = [
   { value: 'worship', label: 'Worship Service' },
@@ -13,6 +14,13 @@ const CATEGORIES = [
   { value: 'fellowship', label: 'Fellowship' },
   { value: 'meeting', label: 'Meeting' },
   { value: 'general', label: 'General' }
+];
+
+const AGE_GROUPS = [
+  { value: 'children', label: 'Children' },
+  { value: 'youth', label: 'Youth' },
+  { value: 'adult', label: 'Adult' },
+  { value: 'all-ages', label: 'All Ages' }
 ];
 
 const MSG_CATEGORIES = [
@@ -30,13 +38,15 @@ router.get('/', (req, res) => {
   const users = authService.getAllUsers();
   const upcomingEvents = calendarService.getUpcoming(5);
   const churchMessages = churchMessageService.getAll(5);
+  const upcomingLessons = lessonService.getUpcoming(3);
 
   res.render('layout', {
     title: 'Admin Dashboard',
     view: 'admin/dashboard',
     memberCount: users.length,
     upcomingEvents,
-    churchMessages
+    churchMessages,
+    upcomingLessons
   });
 });
 
@@ -150,6 +160,60 @@ router.post('/church-messages/:id/delete', (req, res) => {
   churchMessageService.delete(req.params.id);
   req.session.flash = { type: 'success', message: 'Message deleted.' };
   res.redirect('/admin/church-messages');
+});
+
+// --- Sunday School Lessons ---
+
+router.get('/lessons', (req, res) => {
+  const ageGroup = req.query.age_group || '';
+  const lessons = ageGroup
+    ? lessonService.getByAgeGroup(ageGroup)
+    : lessonService.getAll();
+
+  res.render('layout', {
+    title: 'Sunday School Lessons',
+    view: 'admin/lessons',
+    lessons,
+    ageGroups: AGE_GROUPS,
+    activeAgeGroup: ageGroup
+  });
+});
+
+router.post('/lessons', (req, res) => {
+  const { title, scripture_reference, study_date, teacher, age_group, content, status } = req.body;
+
+  if (!title || !study_date) {
+    req.session.flash = { type: 'error', message: 'Title and study date are required.' };
+    return res.redirect('/admin/lessons');
+  }
+
+  lessonService.create({
+    title, scripture_reference, study_date, teacher, age_group, content,
+    status: status || 'draft',
+    created_by: req.session.user.id
+  });
+
+  req.session.flash = { type: 'success', message: 'Lesson created!' };
+  res.redirect('/admin/lessons');
+});
+
+router.post('/lessons/:id/update', (req, res) => {
+  const { title, scripture_reference, study_date, teacher, age_group, content, status } = req.body;
+
+  if (!title || !study_date) {
+    req.session.flash = { type: 'error', message: 'Title and study date are required.' };
+    return res.redirect('/admin/lessons');
+  }
+
+  lessonService.update(req.params.id, { title, scripture_reference, study_date, teacher, age_group, content, status });
+  req.session.flash = { type: 'success', message: 'Lesson updated!' };
+  res.redirect('/admin/lessons');
+});
+
+router.post('/lessons/:id/delete', (req, res) => {
+  lessonService.delete(req.params.id);
+  req.session.flash = { type: 'success', message: 'Lesson deleted.' };
+  res.redirect('/admin/lessons');
 });
 
 // --- Members ---

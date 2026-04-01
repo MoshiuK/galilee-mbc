@@ -354,6 +354,12 @@ a:hover { text-decoration: underline; }
 .cat-badge-reminder { background: var(--gold); color: var(--purple-dark); }
 .cat-badge-update { background: var(--green); color: var(--white); }
 
+/* Age group badges */
+.cat-badge-children { background: #ea580c; color: var(--white); }
+.cat-badge-youth { background: #2563eb; color: var(--white); }
+.cat-badge-adult { background: var(--purple); color: var(--white); }
+.cat-badge-all-ages { background: var(--green); color: var(--white); }
+
 /* Role badges */
 .role-badge {
   display: inline-block;

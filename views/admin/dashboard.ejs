@@ -8,6 +8,7 @@
     <a href="/admin" class="admin-nav-item active">Dashboard</a>
     <a href="/admin/calendar" class="admin-nav-item">Calendar</a>
     <a href="/admin/church-messages" class="admin-nav-item">Church Messages</a>
+    <a href="/admin/lessons" class="admin-nav-item">Lessons</a>
     <a href="/admin/members" class="admin-nav-item">Members</a>
   </div>
 
@@ -63,6 +64,26 @@
         </ul>
       <% } %>
       <a href="/admin/church-messages" class="btn btn-outline" style="margin-top: 1rem;">Manage Messages</a>
+    </div>
+
+    <div class="card">
+      <h2>Upcoming Lessons</h2>
+      <% if (upcomingLessons.length === 0) { %>
+        <p class="text-muted">No upcoming lessons.</p>
+      <% } else { %>
+        <ul class="admin-list">
+          <% upcomingLessons.forEach(lesson => { %>
+            <li>
+              <strong><%= lesson.title %></strong>
+              <span class="msg-cat cat-badge-<%= lesson.age_group %>"><%= lesson.age_group %></span>
+              <span class="event-date">
+                <%= new Date(lesson.study_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' }) %>
+              </span>
+            </li>
+          <% }) %>
+        </ul>
+      <% } %>
+      <a href="/admin/lessons" class="btn btn-outline" style="margin-top: 1rem;">Manage Lessons</a>
     </div>
   </div>
 </div>

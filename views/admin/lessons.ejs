@@ -1,0 +1,168 @@
+<div class="container">
+  <div class="admin-header">
+    <h1>Sunday School Lessons</h1>
+  </div>
+
+  <div class="admin-nav">
+    <a href="/admin" class="admin-nav-item">Dashboard</a>
+    <a href="/admin/calendar" class="admin-nav-item">Calendar</a>
+    <a href="/admin/church-messages" class="admin-nav-item">Church Messages</a>
+    <a href="/admin/lessons" class="admin-nav-item active">Lessons</a>
+    <a href="/admin/members" class="admin-nav-item">Members</a>
+  </div>
+
+  <!-- New Lesson Form -->
+  <div class="card">
+    <h2>Add New Lesson</h2>
+    <form method="POST" action="/admin/lessons">
+      <div class="form-row">
+        <div class="form-group">
+          <label for="title">Lesson Title</label>
+          <input type="text" id="title" name="title" required placeholder="e.g. The Beatitudes">
+        </div>
+        <div class="form-group">
+          <label for="age_group">Age Group</label>
+          <select id="age_group" name="age_group">
+            <% ageGroups.forEach(ag => { %>
+              <option value="<%= ag.value %>"><%= ag.label %></option>
+            <% }) %>
+          </select>
+        </div>
+      </div>
+      <div class="form-row">
+        <div class="form-group">
+          <label for="study_date">Study Date</label>
+          <input type="date" id="study_date" name="study_date" required>
+        </div>
+        <div class="form-group">
+          <label for="teacher">Teacher</label>
+          <input type="text" id="teacher" name="teacher" placeholder="Teacher name">
+        </div>
+        <div class="form-group">
+          <label for="status">Status</label>
+          <select id="status" name="status">
+            <option value="draft">Draft</option>
+            <option value="published">Published</option>
+          </select>
+        </div>
+      </div>
+      <div class="form-group">
+        <label for="scripture_reference">Scripture Reference</label>
+        <input type="text" id="scripture_reference" name="scripture_reference" placeholder="e.g. Matthew 5:1-12">
+      </div>
+      <div class="form-group">
+        <label for="content">Lesson Content</label>
+        <textarea id="content" name="content" rows="5" placeholder="Lesson notes, discussion questions, key points..."></textarea>
+      </div>
+      <button type="submit" class="btn">Add Lesson</button>
+    </form>
+  </div>
+
+  <!-- Filter by Age Group -->
+  <div class="filter-bar" style="margin-bottom: 1rem;">
+    <a href="/admin/lessons" class="btn btn-sm <%= !activeAgeGroup ? '' : 'btn-outline' %>">All</a>
+    <% ageGroups.forEach(ag => { %>
+      <a href="/admin/lessons?age_group=<%= ag.value %>" class="btn btn-sm <%= activeAgeGroup === ag.value ? '' : 'btn-outline' %>"><%= ag.label %></a>
+    <% }) %>
+  </div>
+
+  <!-- Lessons List -->
+  <% if (lessons.length === 0) { %>
+    <div class="card">
+      <p class="text-muted text-center">No lessons yet. Add your first lesson above.</p>
+    </div>
+  <% } else { %>
+    <% lessons.forEach(lesson => { %>
+      <div class="card lesson-item">
+        <div class="church-msg-header">
+          <div>
+            <strong style="font-size: 1.1rem;"><%= lesson.title %></strong>
+            <span class="msg-cat cat-badge-<%= lesson.age_group %>"><%= lesson.age_group %></span>
+            <% if (lesson.status === 'draft') { %>
+              <span class="msg-cat" style="background: var(--gray-400); color: white;">Draft</span>
+            <% } else { %>
+              <span class="msg-cat" style="background: var(--green); color: white;">Published</span>
+            <% } %>
+          </div>
+          <span class="message-date">
+            <%= new Date(lesson.study_date + 'T00:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' }) %>
+          </span>
+        </div>
+
+        <% if (lesson.scripture_reference) { %>
+          <p style="margin: 0.5rem 0; color: var(--purple);"><strong>Scripture:</strong> <%= lesson.scripture_reference %></p>
+        <% } %>
+        <% if (lesson.teacher) { %>
+          <p style="margin: 0.25rem 0; color: var(--gray-600); font-size: 0.9rem;"><strong>Teacher:</strong> <%= lesson.teacher %></p>
+        <% } %>
+        <% if (lesson.content) { %>
+          <div class="church-msg-body" style="margin-top: 0.5rem;"><%= lesson.content %></div>
+        <% } %>
+
+        <div class="church-msg-footer">
+          <span class="message-date">Created by <%= lesson.creator_name || 'Unknown' %></span>
+          <div class="action-cell">
+            <button type="button" class="btn btn-sm btn-outline" onclick="toggleEdit('<%= lesson.id %>')">Edit</button>
+            <form method="POST" action="/admin/lessons/<%= lesson.id %>/delete" class="inline-form" onsubmit="return confirm('Delete this lesson?');">
+              <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+            </form>
+          </div>
+        </div>
+
+        <!-- Edit Form (hidden by default) -->
+        <div id="edit-<%= lesson.id %>" style="display: none; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--gray-200);">
+          <form method="POST" action="/admin/lessons/<%= lesson.id %>/update">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Title</label>
+                <input type="text" name="title" value="<%= lesson.title %>" required>
+              </div>
+              <div class="form-group">
+                <label>Age Group</label>
+                <select name="age_group">
+                  <% ageGroups.forEach(ag => { %>
+                    <option value="<%= ag.value %>" <%= lesson.age_group === ag.value ? 'selected' : '' %>><%= ag.label %></option>
+                  <% }) %>
+                </select>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Study Date</label>
+                <input type="date" name="study_date" value="<%= lesson.study_date %>" required>
+              </div>
+              <div class="form-group">
+                <label>Teacher</label>
+                <input type="text" name="teacher" value="<%= lesson.teacher || '' %>">
+              </div>
+              <div class="form-group">
+                <label>Status</label>
+                <select name="status">
+                  <option value="draft" <%= lesson.status === 'draft' ? 'selected' : '' %>>Draft</option>
+                  <option value="published" <%= lesson.status === 'published' ? 'selected' : '' %>>Published</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label>Scripture Reference</label>
+              <input type="text" name="scripture_reference" value="<%= lesson.scripture_reference || '' %>">
+            </div>
+            <div class="form-group">
+              <label>Lesson Content</label>
+              <textarea name="content" rows="5"><%= lesson.content || '' %></textarea>
+            </div>
+            <button type="submit" class="btn btn-sm">Save Changes</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="toggleEdit('<%= lesson.id %>')">Cancel</button>
+          </form>
+        </div>
+      </div>
+    <% }) %>
+  <% } %>
+</div>
+
+<script>
+function toggleEdit(id) {
+  const el = document.getElementById('edit-' + id);
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+</script>

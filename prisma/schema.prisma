@@ -52,6 +52,13 @@ model Tenant {
   swApiToken       String?
   swSpaceUrl       String?
 
+  // AI Features
+  aiIvrEnabled     Boolean  @default(false)
+  aiIvrPrompt      String?  // Custom AI IVR system prompt
+  aiSummaryEnabled Boolean  @default(false)
+  notificationPhone String? // Phone number for SMS notifications (call summaries)
+  smsSummaryEnabled Boolean  @default(false)
+
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
@@ -67,6 +74,8 @@ model Tenant {
   timeConditions   TimeCondition[]
   recordings       Recording[]
   contacts         Contact[]
+  notifications    Notification[]
+  usageStats       UsageStat[]
 
   @@map("tenants")
 }
@@ -126,6 +135,10 @@ model Extension {
 
   // Do Not Disturb
   dndEnabled      Boolean  @default(false)
+
+  // Auto-Provisioning
+  provisionMac    String?  // Phone MAC address (lowercase, no separators)
+  provisionModel  String?  // Phone model (e.g. "Yealink T54W")
 
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
@@ -349,6 +362,7 @@ model CallLog {
   answeredAt      DateTime?
   endedAt         DateTime?
   recordingUrl    String?
+  aiSummary       String?   // LLM-generated call summary
   inboundExtId    String?
   outboundExtId   String?
 
@@ -423,4 +437,50 @@ model Contact {
 
   @@index([tenantId, phone])
   @@map("contacts")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+model Notification {
+  id           String   @id @default(uuid())
+  tenantId     String
+  type         String   // missed_call, new_voicemail, call_summary, system
+  title        String
+  message      String
+  data         String?  // JSON payload (callId, extensionId, etc.)
+  isRead       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, isRead])
+  @@index([tenantId, createdAt])
+  @@map("notifications")
+}
+
+// =============================================================================
+// USAGE STATS (per-tenant analytics)
+// =============================================================================
+
+model UsageStat {
+  id              String   @id @default(uuid())
+  tenantId        String
+  date            DateTime @db.Date // one row per tenant per day
+  totalCalls      Int      @default(0)
+  inboundCalls    Int      @default(0)
+  outboundCalls   Int      @default(0)
+  internalCalls   Int      @default(0)
+  answeredCalls   Int      @default(0)
+  missedCalls     Int      @default(0)
+  totalMinutes    Int      @default(0)
+  voicemailCount  Int      @default(0)
+  avgCallDuration Int      @default(0) // seconds
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, date])
+  @@index([tenantId, date])
+  @@map("usage_stats")
 }

@@ -17,6 +17,9 @@ import BrandingPage from './pages/BrandingPage';
 import SettingsPage from './pages/SettingsPage';
 import PlatformAdminPage from './pages/PlatformAdminPage';
 import TenantFormPage from './pages/TenantFormPage';
+import NotificationsPage from './pages/NotificationsPage';
+import UsageStatsPage from './pages/UsageStatsPage';
+import ProvisioningPage from './pages/ProvisioningPage';
 
 function ProtectedRoute({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -48,6 +51,9 @@ export default function App() {
           <Route path="voicemail" element={<VoicemailPage />} />
           <Route path="contacts" element={<ContactsPage />} />
           <Route path="time-conditions" element={<TimeConditionsPage />} />
+          <Route path="notifications" element={<NotificationsPage />} />
+          <Route path="usage-stats" element={<UsageStatsPage />} />
+          <Route path="provisioning" element={<ProvisioningPage />} />
           <Route path="branding" element={<BrandingPage />} />
           <Route path="settings" element={<SettingsPage />} />
           <Route path="admin/tenants" element={<PlatformAdminPage />} />

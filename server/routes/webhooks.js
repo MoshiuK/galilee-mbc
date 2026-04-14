@@ -13,6 +13,9 @@ const router = require('express').Router();
 const prisma = require('../utils/prisma');
 const { CallRouter } = require('../services/callRouter');
 const { LaML } = require('../services/laml');
+const { buildAiIvrResponse, processAiGatherInput } = require('../services/aiIvr');
+const { getSwaigFunctions, handleSwaigTransfer, handleSwaigCheckHours, handleSwaigTakeMessage } = require('../services/swaig');
+const { generateCallSummary } = require('../services/callSummary');
 const logger = require('../utils/logger');
 
 /**
@@ -412,6 +415,18 @@ router.post('/voicemail-recording', async (req, res) => {
       }).catch(() => {});
     }
 
+    // Create voicemail notification
+    const ext = await prisma.extension.findUnique({ where: { id: extId } });
+    await prisma.notification.create({
+      data: {
+        tenantId,
+        type: 'new_voicemail',
+        title: `New voicemail from ${From || 'Unknown'}`,
+        message: `${CallerName || From || 'Unknown caller'} left a ${RecordingDuration || 0}s voicemail for ext ${ext?.number || extId}`,
+        data: JSON.stringify({ extensionId: extId, callerNumber: From }),
+      },
+    }).catch(() => {});
+
     const laml = new LaML();
     laml.say('Your message has been recorded. Goodbye.').hangup();
     sendLaml(res, laml.toXml());
@@ -464,6 +479,27 @@ router.post('/call-status', async (req, res) => {
       data,
     });
 
+    // Generate AI call summary when call completes
+    if (CallStatus === 'completed' || CallStatus === 'no-answer') {
+      const callLog = await prisma.callLog.findFirst({ where: { swCallId: CallSid } });
+      if (callLog) {
+        generateCallSummary(callLog).catch((err) => logger.error('Call summary error', err));
+
+        // Create missed call notification
+        if (CallStatus === 'no-answer' && callLog.direction === 'inbound') {
+          await prisma.notification.create({
+            data: {
+              tenantId: callLog.tenantId,
+              type: 'missed_call',
+              title: `Missed call from ${callLog.callerName || callLog.callerNumber}`,
+              message: `Missed inbound call from ${callLog.callerNumber} at ${new Date().toLocaleString()}`,
+              data: JSON.stringify({ callLogId: callLog.id, callerNumber: callLog.callerNumber }),
+            },
+          }).catch(() => {});
+        }
+      }
+    }
+
     res.sendStatus(200);
   } catch (err) {
     logger.error('Webhook call-status error', err);
@@ -504,6 +540,153 @@ router.post('/recording-status', async (req, res) => {
   } catch (err) {
     logger.error('Webhook recording-status error', err);
     res.sendStatus(200);
+  }
+});
+
+// ============================================================================
+// AI IVR ENDPOINTS
+// ============================================================================
+
+// POST /api/webhooks/signalwire/ai-gather
+// Called when caller speaks into the AI IVR speech gather.
+router.post('/ai-gather', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const { SpeechResult, Digits } = req.body;
+
+    logger.info(`AI Gather: tenant=${tenantId}, speech="${SpeechResult}", digits=${Digits}`);
+
+    const xml = await processAiGatherInput(tenantId, SpeechResult, Digits);
+    sendLaml(res, xml);
+  } catch (err) {
+    logger.error('Webhook ai-gather error', err);
+    sendError(res);
+  }
+});
+
+// POST /api/webhooks/signalwire/ai-fallback
+// Called when AI IVR can't understand input — routes to first available extension.
+router.post('/ai-fallback', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+
+    // Find the first active extension (operator/reception)
+    const ext = await prisma.extension.findFirst({
+      where: { tenantId, status: 'active' },
+      orderBy: { number: 'asc' },
+    });
+
+    if (ext) {
+      const callRouter = new CallRouter(tenantId);
+      const xml = await callRouter.routeToExtension(ext.id, req.body);
+      return sendLaml(res, xml);
+    }
+
+    const laml = new LaML();
+    laml.say('We are unable to connect your call at this time. Please try again later. Goodbye.');
+    laml.hangup();
+    sendLaml(res, laml.toXml());
+  } catch (err) {
+    logger.error('Webhook ai-fallback error', err);
+    sendError(res);
+  }
+});
+
+// POST /api/webhooks/signalwire/ai-route
+// Routes the call after AI IVR has determined the destination.
+router.post('/ai-route', async (req, res) => {
+  try {
+    const { tenantId, type, targetId } = req.query;
+
+    const callRouter = new CallRouter(tenantId);
+    const xml = await callRouter.routeToDestination(type, targetId, req.body);
+    sendLaml(res, xml);
+  } catch (err) {
+    logger.error('Webhook ai-route error', err);
+    sendError(res);
+  }
+});
+
+// ============================================================================
+// SWAIG ENDPOINTS (SignalWire AI Gateway)
+// ============================================================================
+
+// GET /api/webhooks/signalwire/swaig-functions
+// Returns available SWAIG functions for SignalWire Call Flow Builder.
+router.get('/swaig-functions', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const functions = await getSwaigFunctions(tenantId);
+    res.json(functions);
+  } catch (err) {
+    logger.error('SWAIG functions error', err);
+    res.json([]);
+  }
+});
+
+// POST /api/webhooks/signalwire/swaig-transfer
+// Called by SignalWire AI Agent when it decides to transfer the call.
+router.post('/swaig-transfer', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const { argument_parsed } = req.body;
+    const destination = argument_parsed?.destination || req.body.destination;
+
+    logger.info(`SWAIG transfer: tenant=${tenantId}, destination="${destination}"`);
+
+    const result = await handleSwaigTransfer(tenantId, destination);
+
+    if (result.action === 'transfer') {
+      // Tell SignalWire AI to stop and hand off to call routing
+      const WEBHOOK_BASE = process.env.WEBHOOK_BASE_URL || 'http://localhost:3000/api/webhooks/signalwire';
+      res.json({
+        back_to_back_functions: false,
+        stop: true,
+        transfer: `${WEBHOOK_BASE}/ai-route?tenantId=${tenantId}&type=${result.type}&targetId=${result.targetId}`,
+      });
+    } else {
+      res.json({
+        back_to_back_functions: false,
+        stop: false,
+        response: `I couldn't find ${destination}. Could you be more specific about who you'd like to reach?`,
+      });
+    }
+  } catch (err) {
+    logger.error('SWAIG transfer error', err);
+    res.json({ stop: false, response: 'I had trouble processing that transfer. Let me connect you to our main line.' });
+  }
+});
+
+// POST /api/webhooks/signalwire/swaig-check-hours
+router.post('/swaig-check-hours', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const result = await handleSwaigCheckHours(tenantId);
+    res.json({
+      back_to_back_functions: false,
+      stop: false,
+      response: result.message,
+    });
+  } catch (err) {
+    logger.error('SWAIG check-hours error', err);
+    res.json({ stop: false, response: 'I had trouble checking our hours.' });
+  }
+});
+
+// POST /api/webhooks/signalwire/swaig-take-message
+router.post('/swaig-take-message', async (req, res) => {
+  try {
+    const { tenantId } = req.query;
+    const { argument_parsed } = req.body;
+    const result = await handleSwaigTakeMessage(tenantId, argument_parsed || req.body);
+    res.json({
+      back_to_back_functions: false,
+      stop: true,
+      response: result.message,
+    });
+  } catch (err) {
+    logger.error('SWAIG take-message error', err);
+    res.json({ stop: false, response: 'I had trouble saving your message. Please try calling back.' });
   }
 });
 

@@ -41,6 +41,11 @@ app.use('/api/contacts', require('./routes/contacts'));
 app.use('/api/time-conditions', require('./routes/timeConditions'));
 app.use('/api/recordings', require('./routes/recordings'));
 app.use('/api/branding', require('./routes/branding'));
+app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/usage-stats', require('./routes/usageStats'));
+
+// Phone auto-provisioning (public endpoint for phones + admin endpoints)
+app.use('/api/provisioning', require('./routes/provisioning'));
 
 // SignalWire Webhooks (no auth — SignalWire calls these)
 app.use('/api/webhooks/signalwire', require('./routes/webhooks'));

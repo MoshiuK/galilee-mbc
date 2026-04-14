@@ -4,19 +4,22 @@ import { useAuthStore } from '../../stores/authStore';
 import {
   LayoutDashboard, Phone, PhoneCall, Hash, ListTree, Users, Clock,
   Voicemail, BookUser, Palette, Settings, LogOut, Menu, X, ChevronDown,
-  Building2, PhoneForwarded, Layers
+  Building2, PhoneForwarded, Layers, Bell, BarChart3, Smartphone
 } from 'lucide-react';
 
 const tenantNav = [
   { to: '/', icon: LayoutDashboard, label: 'Dashboard', end: true },
   { to: '/extensions', icon: Hash, label: 'Extensions' },
   { to: '/phone-numbers', icon: Phone, label: 'Phone Numbers' },
+  { to: '/provisioning', icon: Smartphone, label: 'Phone Provisioning' },
   { to: '/ivr', icon: ListTree, label: 'IVR Menus' },
   { to: '/ring-groups', icon: PhoneForwarded, label: 'Ring Groups' },
   { to: '/call-queues', icon: Layers, label: 'Call Queues' },
   { to: '/time-conditions', icon: Clock, label: 'Time Conditions' },
   { to: '/call-logs', icon: PhoneCall, label: 'Call Logs' },
   { to: '/voicemail', icon: Voicemail, label: 'Voicemail' },
+  { to: '/notifications', icon: Bell, label: 'Notifications' },
+  { to: '/usage-stats', icon: BarChart3, label: 'Usage Stats' },
   { to: '/contacts', icon: BookUser, label: 'Contacts' },
   { to: '/branding', icon: Palette, label: 'Branding' },
   { to: '/settings', icon: Settings, label: 'Settings' },

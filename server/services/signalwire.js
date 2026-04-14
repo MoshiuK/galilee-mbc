@@ -13,6 +13,7 @@ class SignalWireClient {
     this.apiToken = apiToken || process.env.SIGNALWIRE_API_TOKEN;
     this.spaceUrl = spaceUrl || process.env.SIGNALWIRE_SPACE_URL;
     this.baseUrl = `https://${this.spaceUrl}/api/laml/2010-04-01/Accounts/${this.projectId}`;
+    this.relayUrl = `https://${this.spaceUrl}/api/relay/rest`;
   }
 
   /**
@@ -150,6 +151,89 @@ class SignalWireClient {
 
   async deleteRecording(recordingSid) {
     return this.request('DELETE', `/Recordings/${recordingSid}.json`);
+  }
+
+  // =========================================================================
+  // Relay REST API (JSON-based — used for porting, SIP endpoints, etc.)
+  // =========================================================================
+
+  async relayRequest(method, path, body = null) {
+    const url = `${this.relayUrl}${path}`;
+    const options = {
+      method,
+      headers: {
+        Authorization: this.authHeader,
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+    };
+
+    if (body) {
+      options.body = JSON.stringify(body);
+    }
+
+    logger.debug(`SignalWire Relay API: ${method} ${url}`);
+
+    const response = await fetch(url, options);
+    const data = await response.json().catch(() => ({}));
+
+    if (!response.ok) {
+      logger.error('SignalWire Relay API error', { status: response.status, data });
+      const err = new Error(data.message || data.error || 'SignalWire API error');
+      err.status = response.status;
+      err.details = data;
+      throw err;
+    }
+
+    return data;
+  }
+
+  // =========================================================================
+  // Number Porting
+  // =========================================================================
+
+  /**
+   * Submit a port-in order to SignalWire.
+   * This initiates the process of transferring numbers from another carrier.
+   */
+  async createPortOrder({ numbers, name, carrierName, accountNumber, accountPin, contactName, contactPhone, contactEmail, billingAddress }) {
+    return this.relayRequest('POST', '/phone_number_port_ins', {
+      numbers: numbers.map((n) => ({ number: n })),
+      name: name || `Port ${numbers[0]}`,
+      winning_carrier: 'SignalWire',
+      losing_carrier: carrierName,
+      billing_phone_number: contactPhone || numbers[0],
+      end_user: {
+        admin_name: contactName,
+        admin_email: contactEmail,
+        admin_phone: contactPhone,
+      },
+      billing_address: billingAddress || {},
+      // account_number and pin are sent as part of the LOA
+    });
+  }
+
+  /**
+   * Get the status of a port order.
+   */
+  async getPortOrder(portOrderId) {
+    return this.relayRequest('GET', `/phone_number_port_ins/${portOrderId}`);
+  }
+
+  /**
+   * List all port orders.
+   */
+  async listPortOrders() {
+    return this.relayRequest('GET', '/phone_number_port_ins');
+  }
+
+  /**
+   * Upload LOA (Letter of Authorization) document for a port order.
+   */
+  async uploadPortLoa(portOrderId, loaUrl) {
+    return this.relayRequest('POST', `/phone_number_port_ins/${portOrderId}/loa`, {
+      url: loaUrl,
+    });
   }
 }
 

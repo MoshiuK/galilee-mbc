@@ -181,7 +181,7 @@ router.post('/tenants/:tenantId/phone-numbers/purchase', async (req, res, next) 
   } catch (err) { next(err); }
 });
 
-// Port in an existing number
+// Port in an existing number — submits directly to SignalWire
 router.post('/tenants/:tenantId/phone-numbers/port', async (req, res, next) => {
   try {
     const {
@@ -192,13 +192,44 @@ router.post('/tenants/:tenantId/phone-numbers/port', async (req, res, next) => {
       contactName,        // authorized contact
       contactPhone,       // contact phone
       contactEmail,       // contact email
-      billingAddress,     // billing address object
+      billingAddress,     // billing address object { street, city, state, zip }
       friendlyName,       // label for the number
     } = req.body;
 
-    // Save the port request as pending numbers in our DB
+    const numbersToPort = phoneNumbers || [req.body.phoneNumber];
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.tenantId } });
+    const sw = getClientForTenant(tenant);
+
+    // Submit port order to SignalWire
+    let portOrder = null;
+    let swError = null;
+    try {
+      portOrder = await sw.createPortOrder({
+        numbers: numbersToPort,
+        name: `${tenant.name} - Port ${numbersToPort[0]}`,
+        carrierName,
+        accountNumber,
+        accountPin,
+        contactName,
+        contactPhone,
+        contactEmail,
+        billingAddress: billingAddress || {
+          street: '',
+          city: '',
+          state: '',
+          zip: '',
+          country: 'US',
+        },
+      });
+      logger.info(`Port order created on SignalWire: ${JSON.stringify(portOrder)}`);
+    } catch (err) {
+      swError = err;
+      logger.error('SignalWire port order failed, saving locally', err);
+    }
+
+    // Save numbers as pending in our DB
     const created = [];
-    for (const number of (phoneNumbers || [req.body.phoneNumber])) {
+    for (const number of numbersToPort) {
       const pn = await prisma.phoneNumber.create({
         data: {
           tenantId: req.params.tenantId,
@@ -206,42 +237,70 @@ router.post('/tenants/:tenantId/phone-numbers/port', async (req, res, next) => {
           friendlyName: friendlyName || `Porting: ${number}`,
           active: false, // not active until port completes
           routeType: 'ivr',
-          callerIdName: `PORT PENDING`,
+          callerIdName: portOrder ? 'PORT SUBMITTED' : 'PORT PENDING',
         },
       });
       created.push(pn);
     }
 
-    // Create notification for tracking
+    // Create notification
     await prisma.notification.create({
       data: {
         tenantId: req.params.tenantId,
         type: 'system',
-        title: 'Number Port Request Submitted',
-        message: `Port-in request for ${phoneNumbers?.join(', ') || req.body.phoneNumber} from ${carrierName}. ` +
-          `Account: ${accountNumber}. Contact: ${contactName}. ` +
-          `Estimated completion: 7-14 business days. ` +
-          `Submit the LOA and recent bill to SignalWire to complete the port.`,
+        title: portOrder
+          ? 'Port Request Submitted to SignalWire'
+          : 'Port Request Saved (Manual Action Needed)',
+        message: portOrder
+          ? `Port-in order submitted for ${numbersToPort.join(', ')} from ${carrierName}. ` +
+            `SignalWire Order ID: ${portOrder.id || 'pending'}. ` +
+            `Estimated completion: 7-14 business days.`
+          : `Port request saved for ${numbersToPort.join(', ')} from ${carrierName}. ` +
+            `Auto-submission failed: ${swError?.message || 'unknown error'}. ` +
+            `Please submit manually at SignalWire dashboard.`,
         data: JSON.stringify({
-          phoneNumbers: phoneNumbers || [req.body.phoneNumber],
-          carrierName, accountNumber, contactName, contactPhone, contactEmail, billingAddress,
-          status: 'pending',
+          phoneNumbers: numbersToPort,
+          carrierName, accountNumber, contactName, contactPhone, contactEmail,
+          portOrderId: portOrder?.id || null,
+          status: portOrder ? 'submitted' : 'pending_manual',
           submittedAt: new Date().toISOString(),
         }),
       },
     });
 
-    res.status(201).json({
-      message: 'Port request created. Numbers saved as pending.',
-      numbers: created,
-      nextSteps: [
-        'Submit Letter of Authorization (LOA) to SignalWire',
-        'Upload recent bill from current carrier',
-        'Port typically completes in 7-14 business days',
-        'Numbers will auto-activate once port completes',
-      ],
-      signalwirePortUrl: `https://${process.env.SIGNALWIRE_SPACE_URL}/phone_numbers/port`,
-    });
+    if (portOrder) {
+      res.status(201).json({
+        message: 'Port request submitted to SignalWire!',
+        portOrderId: portOrder.id,
+        status: 'submitted',
+        numbers: created,
+        estimatedCompletion: '7-14 business days',
+      });
+    } else {
+      // Fallback — API didn't work, give manual instructions
+      res.status(201).json({
+        message: 'Port request saved. Auto-submission to SignalWire failed — submit manually.',
+        numbers: created,
+        manualUrl: `https://${process.env.SIGNALWIRE_SPACE_URL}/phone_numbers/port`,
+        error: swError?.message,
+        nextSteps: [
+          `Go to https://${process.env.SIGNALWIRE_SPACE_URL}/phone_numbers/port`,
+          `Enter numbers: ${numbersToPort.join(', ')}`,
+          `Carrier: ${carrierName}, Account: ${accountNumber}`,
+          `Upload LOA and recent bill`,
+        ],
+      });
+    }
+  } catch (err) { next(err); }
+});
+
+// Check port order status
+router.get('/tenants/:tenantId/phone-numbers/port-status', async (req, res, next) => {
+  try {
+    const tenant = await prisma.tenant.findUnique({ where: { id: req.params.tenantId } });
+    const sw = getClientForTenant(tenant);
+    const orders = await sw.listPortOrders();
+    res.json(orders);
   } catch (err) { next(err); }
 });
 

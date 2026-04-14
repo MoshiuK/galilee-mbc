@@ -20,6 +20,9 @@ import TenantFormPage from './pages/TenantFormPage';
 import NotificationsPage from './pages/NotificationsPage';
 import UsageStatsPage from './pages/UsageStatsPage';
 import ProvisioningPage from './pages/ProvisioningPage';
+import AdminTenantExtensionsPage from './pages/AdminTenantExtensionsPage';
+import AdminTenantPhoneNumbersPage from './pages/AdminTenantPhoneNumbersPage';
+import AdminAiSettingsPage from './pages/AdminAiSettingsPage';
 
 function ProtectedRoute({ children }) {
   const token = useAuthStore((s) => s.token);
@@ -58,6 +61,11 @@ export default function App() {
           <Route path="settings" element={<SettingsPage />} />
           <Route path="admin/tenants" element={<PlatformAdminPage />} />
           <Route path="admin/tenants/new" element={<TenantFormPage />} />
+          <Route path="admin/tenant/:tenantId/extensions" element={<AdminTenantExtensionsPage />} />
+          <Route path="admin/tenant/:tenantId/phone-numbers" element={<AdminTenantPhoneNumbersPage />} />
+          <Route path="admin/tenant/:tenantId/ivr" element={<IvrPage />} />
+          <Route path="admin/tenant/:tenantId/voicemail" element={<VoicemailPage />} />
+          <Route path="admin/tenant/:tenantId/ai-settings" element={<AdminAiSettingsPage />} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

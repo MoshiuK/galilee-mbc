@@ -1,53 +1,23 @@
 version: '3.8'
 
+# Simplified for Neon (no local PostgreSQL needed)
+# Database is hosted on Neon serverless PostgreSQL
+
 services:
   app:
     build: .
     ports:
       - "${PORT:-3000}:3000"
-    environment:
-      - NODE_ENV=production
-      - DATABASE_URL=postgresql://pbx_user:pbx_password@postgres:5432/whitelabel_pbx?schema=public
-      - REDIS_URL=redis://redis:6379
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+    env_file:
+      - .env
     volumes:
       - ./storage:/app/storage
     restart: unless-stopped
 
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: whitelabel_pbx
-      POSTGRES_USER: pbx_user
-      POSTGRES_PASSWORD: pbx_password
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    ports:
-      - "5432:5432"
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U pbx_user -d whitelabel_pbx"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redisdata:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    restart: unless-stopped
-
-volumes:
-  pgdata:
-  redisdata:
+  # Optional: Redis for caching (not required for basic operation)
+  # Uncomment if you want session caching or rate limiting with Redis
+  # redis:
+  #   image: redis:7-alpine
+  #   ports:
+  #     - "6379:6379"
+  #   restart: unless-stopped

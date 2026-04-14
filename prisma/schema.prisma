@@ -1,0 +1,425 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// PLATFORM LEVEL
+// =============================================================================
+
+model PlatformAdmin {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      String   @default("super_admin") // super_admin, support
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_admins")
+}
+
+// =============================================================================
+// TENANTS (Each business is a tenant)
+// =============================================================================
+
+model Tenant {
+  id               String   @id @default(uuid())
+  name             String
+  slug             String   @unique
+  domain           String?  @unique
+  active           Boolean  @default(true)
+  maxExtensions    Int      @default(50)
+  maxPhoneNumbers  Int      @default(10)
+  plan             String   @default("basic") // basic, professional, enterprise
+
+  // Branding / Whitelabel
+  brandName        String?
+  brandLogo        String?
+  brandPrimaryColor String? @default("#2563eb")
+  brandSecondaryColor String? @default("#1e40af")
+  brandFavicon     String?
+  customCss        String?
+
+  // SignalWire sub-project (optional per-tenant isolation)
+  swProjectId      String?
+  swApiToken       String?
+  swSpaceUrl       String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  // Relations
+  users            User[]
+  extensions       Extension[]
+  phoneNumbers     PhoneNumber[]
+  ivrMenus         IvrMenu[]
+  callQueues       CallQueue[]
+  ringGroups       RingGroup[]
+  callLogs         CallLog[]
+  voicemails       Voicemail[]
+  timeConditions   TimeCondition[]
+  recordings       Recording[]
+  contacts         Contact[]
+
+  @@map("tenants")
+}
+
+// =============================================================================
+// USERS (Tenant-level users)
+// =============================================================================
+
+model User {
+  id        String   @id @default(uuid())
+  tenantId  String
+  email     String
+  password  String
+  firstName String
+  lastName  String
+  role      String   @default("user") // admin, manager, user
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  extension Extension?
+
+  @@unique([tenantId, email])
+  @@map("users")
+}
+
+// =============================================================================
+// EXTENSIONS
+// =============================================================================
+
+model Extension {
+  id              String   @id @default(uuid())
+  tenantId        String
+  userId          String?  @unique
+  number          String
+  name            String
+  type            String   @default("sip") // sip, webrtc, external
+  status          String   @default("active") // active, disabled
+  callerIdName    String?
+  callerIdNumber  String?
+
+  // SIP credentials (for SIP phone registration)
+  sipUsername     String?
+  sipPassword     String?
+
+  // Forwarding
+  forwardEnabled  Boolean  @default(false)
+  forwardNumber   String?
+  forwardAfter    Int      @default(25) // seconds before forwarding
+
+  // Voicemail
+  voicemailEnabled Boolean @default(true)
+  voicemailPin    String?  @default("1234")
+  voicemailGreeting String?
+  voicemailEmail  String?  // email to send voicemail notifications
+
+  // Do Not Disturb
+  dndEnabled      Boolean  @default(false)
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  voicemails      Voicemail[]
+  callLogsInbound CallLog[] @relation("InboundExtension")
+  callLogsOutbound CallLog[] @relation("OutboundExtension")
+  ringGroupMembers RingGroupMember[]
+  callQueueMembers CallQueueMember[]
+
+  @@unique([tenantId, number])
+  @@map("extensions")
+}
+
+// =============================================================================
+// PHONE NUMBERS (DIDs)
+// =============================================================================
+
+model PhoneNumber {
+  id              String   @id @default(uuid())
+  tenantId        String
+  number          String   @unique // E.164 format
+  friendlyName    String?
+  swPhoneNumberId String?  // SignalWire phone number SID
+
+  // Routing destination
+  routeType       String   @default("ivr") // ivr, extension, ring_group, queue, external, time_condition
+  routeDestination String? // ID of the destination (IVR menu ID, extension ID, etc.)
+
+  // Caller ID
+  callerIdName    String?
+
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  callLogs        CallLog[]
+
+  @@map("phone_numbers")
+}
+
+// =============================================================================
+// IVR MENUS (Auto Attendant)
+// =============================================================================
+
+model IvrMenu {
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String
+  description      String?
+  greetingType     String   @default("tts") // tts, recording
+  greetingText     String?  // TTS text
+  greetingRecording String? // URL to recording file
+  greetingVoice    String   @default("en-US-Standard-C") // TTS voice
+  timeout          Int      @default(5)  // seconds to wait for input
+  maxRetries       Int      @default(3)
+  invalidMessage   String?  @default("Invalid selection. Please try again.")
+  timeoutMessage   String?  @default("We didn't receive your selection.")
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  options          IvrOption[]
+
+  @@map("ivr_menus")
+}
+
+model IvrOption {
+  id              String   @id @default(uuid())
+  ivrMenuId       String
+  digit           String   // 0-9, *, #
+  label           String   // "Sales", "Support", etc.
+  actionType      String   // extension, ring_group, queue, ivr_menu, external, voicemail, hangup, repeat
+  actionTarget    String?  // ID or phone number of target
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ivrMenu         IvrMenu  @relation(fields: [ivrMenuId], references: [id], onDelete: Cascade)
+
+  @@unique([ivrMenuId, digit])
+  @@map("ivr_options")
+}
+
+// =============================================================================
+// RING GROUPS
+// =============================================================================
+
+model RingGroup {
+  id             String   @id @default(uuid())
+  tenantId       String
+  name           String
+  strategy       String   @default("simultaneous") // simultaneous, sequential, random
+  ringTime       Int      @default(25) // seconds
+  failoverType   String?  // extension, voicemail, external, ivr_menu
+  failoverTarget String?
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  tenant         Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members        RingGroupMember[]
+
+  @@map("ring_groups")
+}
+
+model RingGroupMember {
+  id           String   @id @default(uuid())
+  ringGroupId  String
+  extensionId  String
+  priority     Int      @default(1) // for sequential strategy
+  createdAt    DateTime @default(now())
+
+  ringGroup    RingGroup @relation(fields: [ringGroupId], references: [id], onDelete: Cascade)
+  extension    Extension @relation(fields: [extensionId], references: [id], onDelete: Cascade)
+
+  @@unique([ringGroupId, extensionId])
+  @@map("ring_group_members")
+}
+
+// =============================================================================
+// CALL QUEUES
+// =============================================================================
+
+model CallQueue {
+  id               String   @id @default(uuid())
+  tenantId         String
+  name             String
+  strategy         String   @default("round_robin") // round_robin, longest_idle, ring_all
+  maxWaitTime      Int      @default(300) // seconds
+  maxCallers       Int      @default(10)
+  holdMusic        String?  // URL to hold music
+  holdMessage      String?  // TTS message played periodically
+  holdMessageInterval Int   @default(30) // seconds between hold messages
+  failoverType     String?  // extension, voicemail, external
+  failoverTarget   String?
+  active           Boolean  @default(true)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  tenant           Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  members          CallQueueMember[]
+
+  @@map("call_queues")
+}
+
+model CallQueueMember {
+  id           String   @id @default(uuid())
+  callQueueId  String
+  extensionId  String
+  priority     Int      @default(1)
+  createdAt    DateTime @default(now())
+
+  callQueue    CallQueue @relation(fields: [callQueueId], references: [id], onDelete: Cascade)
+  extension    Extension @relation(fields: [extensionId], references: [id], onDelete: Cascade)
+
+  @@unique([callQueueId, extensionId])
+  @@map("call_queue_members")
+}
+
+// =============================================================================
+// TIME CONDITIONS (Business Hours Routing)
+// =============================================================================
+
+model TimeCondition {
+  id              String   @id @default(uuid())
+  tenantId        String
+  name            String
+  timezone        String   @default("America/New_York")
+
+  // Match action (during business hours)
+  matchType       String   // ivr, extension, ring_group, queue, external
+  matchTarget     String?
+
+  // No-match action (outside business hours)
+  noMatchType     String   // ivr, extension, voicemail, external, hangup
+  noMatchTarget   String?
+
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  tenant          Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  schedules       TimeSchedule[]
+
+  @@map("time_conditions")
+}
+
+model TimeSchedule {
+  id              String   @id @default(uuid())
+  timeConditionId String
+  dayOfWeek       Int      // 0=Sunday, 6=Saturday
+  startTime       String   // "09:00"
+  endTime         String   // "17:00"
+  createdAt       DateTime @default(now())
+
+  timeCondition   TimeCondition @relation(fields: [timeConditionId], references: [id], onDelete: Cascade)
+
+  @@map("time_schedules")
+}
+
+// =============================================================================
+// CALL LOGS (CDR)
+// =============================================================================
+
+model CallLog {
+  id              String    @id @default(uuid())
+  tenantId        String
+  phoneNumberId   String?
+  swCallId        String?   @unique // SignalWire call SID
+  direction       String    // inbound, outbound, internal
+  callerNumber    String
+  callerName      String?
+  calledNumber    String
+  status          String    // ringing, in-progress, completed, busy, no-answer, failed, canceled
+  duration        Int?      // seconds
+  startedAt       DateTime  @default(now())
+  answeredAt      DateTime?
+  endedAt         DateTime?
+  recordingUrl    String?
+  inboundExtId    String?
+  outboundExtId   String?
+
+  tenant          Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  phoneNumber     PhoneNumber? @relation(fields: [phoneNumberId], references: [id], onDelete: SetNull)
+  inboundExt      Extension? @relation("InboundExtension", fields: [inboundExtId], references: [id], onDelete: SetNull)
+  outboundExt     Extension? @relation("OutboundExtension", fields: [outboundExtId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId, startedAt])
+  @@map("call_logs")
+}
+
+// =============================================================================
+// VOICEMAIL
+// =============================================================================
+
+model Voicemail {
+  id           String   @id @default(uuid())
+  tenantId     String
+  extensionId  String
+  callerNumber String
+  callerName   String?
+  duration     Int?     // seconds
+  recordingUrl String
+  transcription String?
+  isRead       Boolean  @default(false)
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  extension    Extension @relation(fields: [extensionId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, extensionId])
+  @@map("voicemails")
+}
+
+// =============================================================================
+// RECORDINGS
+// =============================================================================
+
+model Recording {
+  id           String   @id @default(uuid())
+  tenantId     String
+  swRecordingId String? // SignalWire recording SID
+  callId       String?
+  url          String
+  duration     Int?
+  createdAt    DateTime @default(now())
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@map("recordings")
+}
+
+// =============================================================================
+// CONTACTS / PHONEBOOK
+// =============================================================================
+
+model Contact {
+  id           String   @id @default(uuid())
+  tenantId     String
+  firstName    String
+  lastName     String?
+  company      String?
+  phone        String
+  phoneAlt     String?
+  email        String?
+  notes        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  tenant       Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, phone])
+  @@map("contacts")
+}
